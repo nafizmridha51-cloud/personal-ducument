@@ -1,0 +1,135 @@
+[
+  {
+    "id": 0,
+    "author": "user",
+    "payload": {
+      "type": "text",
+      "text": "আমাকে একটা কড লিখে দাও। যেখানে আমার পেরসনাল ডুকুমেন্ট গুলা সংরক্ষিত থাকবে। সেখেনে ডুকুমেন্ট গুলা আপলোড ওঁ ডাওনলড করার সিস্টেম করে দেও। এবং নিজের অ পিতা মাতা এর জন্য আলাদা ফাইল করে দিবা। এবং অই ফাইল গুলা পাসওয়ার্ড দেওার সেস্তেম করে দাও",
+      "files": [],
+      "fileUploads": [],
+      "cMarkNode": {}
+    },
+    "createdTimestamp": {
+      "seconds": 1771251413,
+      "nanos": 298000000
+    }
+  },
+  {
+    "id": 1,
+    "author": "model",
+    "payload": {
+      "type": "thinking",
+      "text": "**Defining the Document System**\n\nI'm now zeroing in on the core functionality: uploading and downloading files. I'm also considering the user's need for category organization: Personal, Father, and Mother. Password protection is essential, specifically for specific folders or individual documents.\n\n\n**Refining the Technical Scope**\n\nI'm now settling on a React and Tailwind frontend. I'll simulate a file management system using local state. Key folders will be \"আমার নথি\", \"বাবার নথি\", and \"মায়ের নথি\". Security will be a password modal. I'll experiment with the Gemini API to add smart summarization. The primary focus is file management, and I'll lean heavily on browser storage, since I can't provide a cloud backend.\n\n\n",
+      "cMarkNode": {}
+    },
+    "createdTimestamp": {
+      "seconds": 1771251413,
+      "nanos": 298000000
+    },
+    "doneTimestamp": {
+      "seconds": 1771251427,
+      "nanos": 845000000
+    }
+  },
+  {
+    "id": 2,
+    "author": "model",
+    "payload": {
+      "type": "generationTable",
+      "entries": [
+        {
+          "path": "metadata.json",
+          "generationType": 0,
+          "isDone": true,
+          "description": "App metadata and permissions",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\n{\n  \"name\": \"সুরক্ষিত নথি ভল্ট (Secure Doc Vault)\",\n  \"description\": \"একটি আধুনিক এবং সুরক্ষিত ব্যক্তিগত ডকুমেন্ট ম্যানেজমেন্ট সিস্টেম যেখানে আপনি আপনার এবং আপনার বাবা-মায়ের গুরুত্বপূর্ণ নথিগুলো পাসওয়ার্ড দিয়ে আলাদাভাবে সংরক্ষণ করতে পারবেন।\",\n  \"requestFramePermissions\": [\n    \"camera\"\n  ]\n}\n"
+            }
+          ]
+        },
+        {
+          "path": "index.html",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Main HTML entry point",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\n<!DOCTYPE html>\n<html lang=\"bn\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>সুরক্ষিত নথি ভল্ট</title>\n    <script src=\"https://cdn.tailwindcss.com\"></script>\n    <link href=\"https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&display=swap\" rel=\"stylesheet\">\n    <style>\n        body {\n            font-family: 'Hind Siliguri', sans-serif;\n            background-color: #f8fafc;\n        }\n    </style>\n</head>\n<body>\n    <div id=\"root\"></div>\n</body>\n</html>\n"
+            }
+          ]
+        },
+        {
+          "path": "index.tsx",
+          "generationType": 0,
+          "isDone": true,
+          "description": "React entry point",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\nimport React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\n\nconst rootElement = document.getElementById('root');\nif (!rootElement) {\n  throw new Error(\"Could not find root element to mount to\");\n}\n\nconst root = ReactDOM.createRoot(rootElement);\nroot.render(\n  <React.StrictMode>\n    <App />\n  </React.StrictMode>\n);\n"
+            }
+          ]
+        },
+        {
+          "path": "types.ts",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Global types for the application",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\nexport type Category = 'Personal' | 'Father' | 'Mother';\n\nexport interface FileData {\n  id: string;\n  name: string;\n  type: string;\n  size: string;\n  category: Category;\n  uploadDate: string;\n  dataUrl: string; // Base64 representation for simulation\n}\n\nexport interface FolderConfig {\n  id: Category;\n  label: string;\n  description: string;\n  icon: string;\n  color: string;\n}\n"
+            }
+          ]
+        },
+        {
+          "path": "constants.tsx",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Application constants and folder configurations",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\nimport React from 'react';\nimport { Category, FolderConfig } from './types';\n\nexport const FOLDERS: FolderConfig[] = [\n  {\n    id: 'Personal',\n    label: 'আমার নথি (Personal)',\n    description: 'আমার ব্যক্তিগত সকল ডকুমেন্টস',\n    icon: '👤',\n    color: 'bg-blue-500',\n  },\n  {\n    id: 'Father',\n    label: 'বাবার নথি (Father)',\n    description: 'বাবার গুরুত্বপূর্ণ নথিপত্র',\n    icon: '👨',\n    color: 'bg-emerald-500',\n  },\n  {\n    id: 'Mother',\n    label: 'মায়ের নথি (Mother)',\n    description: 'মায়ের প্রয়োজনীয় ডকুমেন্টস',\n    icon: '👩',\n    color: 'bg-rose-500',\n  }\n];\n\n// In a real app, these would be managed securely. \n// For this demo, we use simple folder-specific passwords.\nexport const FOLDER_PASSWORDS: Record<Category, string> = {\n  'Personal': '1234',\n  'Father': 'father786',\n  'Mother': 'mother123'\n};\n"
+            }
+          ]
+        },
+        {
+          "path": "services/geminiService.ts",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Gemini service for document analysis",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\nimport { GoogleGenAI } from \"@google/genai\";\n\nconst ai = new GoogleGenAI({ apiKey: process.env.API_KEY });\n\nexport const analyzeDocument = async (fileName: string, base64Data: string, mimeType: string) => {\n  try {\n    const response = await ai.models.generateContent({\n      model: 'gemini-3-flash-preview',\n      contents: {\n        parts: [\n          { inlineData: { data: base64Data.split(',')[1], mimeType: mimeType } },\n          { text: `This is a document named ${fileName}. Provide a very short summary (max 10 words) of what this document appears to be in Bengali.` }\n        ]\n      }\n    });\n    return response.text || \"সংক্ষিপ্ত বিবরণ পাওয়া যায়নি।\";\n  } catch (error) {\n    console.error(\"Gemini Error:\", error);\n    return \"নথি বিশ্লেষণে ত্রুটি হয়েছে।\";\n  }\n};\n"
+            }
+          ]
+        },
+        {
+          "path": "App.tsx",
+          "generationType": 0,
+          "isDone": true,
+          "description": "Main application component with folder navigation and security",
+          "diffs": [
+            {
+              "target": "",
+              "replacement": "\nimport React, { useState, useEffect, useRef } from 'react';\nimport { FOLDERS, FOLDER_PASSWORDS } from './constants.tsx';\nimport { Category, FileData } from './types';\nimport { analyzeDocument } from './services/geminiService';\n\nconst App: React.FC = () => {\n  const [activeCategory, setActiveCategory] = useState<Category | null>(null);\n  const [isUnlocked, setIsUnlocked] = useState(false);\n  const [passwordInput, setPasswordInput] = useState('');\n  const [files, setFiles] = useState<FileData[]>([]);\n  const [isUploading, setIsUploading] = useState(false);\n  const [error, setError] = useState('');\n  const fileInputRef = useRef<HTMLInputElement>(null);\n\n  // Load files from local storage on mount\n  useEffect(() => {\n    const savedFiles = localStorage.getItem('vault_files');\n    if (savedFiles) {\n      setFiles(JSON.parse(savedFiles));\n    }\n  }, []);\n\n  // Save files to local storage when changed\n  useEffect(() => {\n    localStorage.setItem('vault_files', JSON.stringify(files));\n  }, [files]);\n\n  const handleFolderClick = (category: Category) => {\n    setActiveCategory(category);\n    setIsUnlocked(false);\n    setPasswordInput('');\n    setError('');\n  };\n\n  const handleUnlock = () => {\n    if (activeCategory && passwordInput === FOLDER_PASSWORDS[activeCategory]) {\n      setIsUnlocked(true);\n      setError('');\n    } else {\n      setError('ভুল পাসওয়ার্ড! আবার চেষ্টা করুন।');\n    }\n  };\n\n  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {\n    const file = event.target.files?.[0];\n    if (!file || !activeCategory) return;\n\n    setIsUploading(true);\n    const reader = new FileReader();\n    \n    reader.onload = async (e) => {\n      const base64Data = e.target?.result as string;\n      \n      const newFile: FileData = {\n        id: Math.random().toString(36).substr(2, 9),\n        name: file.name,\n        type: file.type,\n        size: (file.size / 1024).toFixed(2) + ' KB',\n        category: activeCategory,\n        uploadDate: new Date().toLocaleDateString('bn-BD'),\n        dataUrl: base64Data\n      };\n\n      setFiles(prev => [...prev, newFile]);\n      setIsUploading(false);\n    };\n\n    reader.readAsDataURL(file);\n  };\n\n  const deleteFile = (id: string) => {\n    if (confirm('আপনি কি এই নথিটি মুছে ফেলতে চান?')) {\n      setFiles(prev => prev.filter(f => f.id !== id));\n    }\n  };\n\n  const downloadFile = (file: FileData) => {\n    const link = document.createElement('a');\n    link.href = file.dataUrl;\n    link.download = file.name;\n    document.body.appendChild(link);\n    link.click();\n    document.body.removeChild(link);\n  };\n\n  const currentFolderFiles = files.filter(f => f.category === activeCategory);\n\n  return (\n    <div className=\"min-h-screen flex flex-col md:flex-row\">\n      {/* Sidebar */}\n      <aside className=\"w-full md:w-80 bg-slate-900 text-white p-6 flex flex-col border-r border-slate-700\">\n        <div className=\"flex items-center gap-3 mb-10\">\n          <div className=\"bg-indigo-600 p-2 rounded-lg text-2xl\">🔒</div>\n          <h1 className=\"text-xl font-bold tracking-tight\">নথি ভল্ট</h1>\n        </div>\n\n        <nav className=\"space-y-4 flex-1\">\n          <p className=\"text-xs uppercase text-slate-500 font-bold mb-2\">ফোল্ডার সমূহ</p>\n          {FOLDERS.map((folder) => (\n            <button\n              key={folder.id}\n              onClick={() => handleFolderClick(folder.id)}\n              className={`w-full flex items-center gap-4 p-4 rounded-xl transition-all duration-200 ${\n                activeCategory === folder.id \n                  ? 'bg-slate-800 border-l-4 border-indigo-500 shadow-lg' \n                  : 'hover:bg-slate-800/50'\n              }`}\n            >\n              <span className=\"text-2xl\">{folder.icon}</span>\n              <div className=\"text-left\">\n                <p className=\"font-semibold text-sm\">{folder.label}</p>\n                <p className=\"text-[10px] text-slate-400 truncate w-32\">{folder.description}</p>\n              </div>\n            </button>\n          ))}\n        </nav>\n\n        <div className=\"mt-10 p-4 bg-slate-800 rounded-xl\">\n          <p className=\"text-xs text-slate-400 mb-1\">সুরক্ষা টিপস:</p>\n          <p className=\"text-[11px] text-slate-300\">প্রতিটি ফোল্ডারের জন্য আলাদা পাসওয়ার্ড ব্যবহার করুন। আপনার ডেটা ব্রাউজারে সংরক্ষিত থাকে।</p>\n        </div>\n      </aside>\n\n      {/* Main Content */}\n      <main className=\"flex-1 bg-slate-50 p-4 md:p-10 overflow-y-auto\">\n        {!activeCategory ? (\n          <div className=\"h-full flex flex-col items-center justify-center text-center\">\n            <div className=\"text-7xl mb-6 grayscale opacity-20\">📁</div>\n            <h2 className=\"text-2xl font-bold text-slate-400 mb-2\">শুরু করতে একটি ফোল্ডার বেছে নিন</h2>\n            <p className=\"text-slate-400 max-w-sm\">আপনার ব্যক্তিগত, বাবার অথবা মায়ের নথিপত্র নিরাপদে আপলোড এবং সংরক্ষণ করুন।</p>\n          </div>\n        ) : !isUnlocked ? (\n          <div className=\"max-w-md mx-auto mt-20 p-8 bg-white rounded-2xl shadow-xl border border-slate-200\">\n            <div className=\"text-center mb-6\">\n              <span className=\"text-5xl block mb-4\">{FOLDERS.find(f => f.id === activeCategory)?.icon}</span>\n              <h2 className=\"text-xl font-bold text-slate-800\">{FOLDERS.find(f => f.id === activeCategory)?.label} খুলুন</h2>\n              <p className=\"text-sm text-slate-500 mt-2\">এই ফোল্ডারটি পাসওয়ার্ড দ্বারা সুরক্ষিত।</p>\n            </div>\n            <input\n              type=\"password\"\n              value={passwordInput}\n              onChange={(e) => setPasswordInput(e.target.value)}\n              placeholder=\"পাসওয়ার্ড দিন\"\n              className=\"w-full p-4 border rounded-xl mb-4 focus:ring-2 focus:ring-indigo-500 outline-none text-center tracking-widest\"\n              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}\n            />\n            {error && <p className=\"text-red-500 text-xs text-center mb-4\">{error}</p>}\n            <button\n              onClick={handleUnlock}\n              className=\"w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl transition-colors shadow-lg shadow-indigo-200\"\n            >\n              ফোল্ডার আনলক করুন\n            </button>\n            <div className=\"mt-6 text-center\">\n              <p className=\"text-[10px] text-slate-400\">ডেমো পাসওয়ার্ড: \n                <span className=\"font-mono bg-slate-100 px-1 ml-1\">{FOLDER_PASSWORDS[activeCategory]}</span>\n              </p>\n            </div>\n          </div>\n        ) : (\n          <div className=\"animate-in fade-in duration-500\">\n            <div className=\"flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10\">\n              <div>\n                <div className=\"flex items-center gap-2 mb-1\">\n                  <span className=\"text-2xl\">{FOLDERS.find(f => f.id === activeCategory)?.icon}</span>\n                  <h2 className=\"text-2xl font-bold text-slate-800\">{FOLDERS.find(f => f.id === activeCategory)?.label}</h2>\n                </div>\n                <p className=\"text-slate-500 text-sm\">মোট ফাইল: {currentFolderFiles.length} টি</p>\n              </div>\n\n              <div className=\"flex gap-2\">\n                <input\n                  type=\"file\"\n                  className=\"hidden\"\n                  ref={fileInputRef}\n                  onChange={handleFileUpload}\n                />\n                <button\n                  onClick={() => fileInputRef.current?.click()}\n                  disabled={isUploading}\n                  className=\"bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50\"\n                >\n                  {isUploading ? 'আপলোড হচ্ছে...' : 'নতুন নথি যোগ করুন +'}\n                </button>\n              </div>\n            </div>\n\n            {currentFolderFiles.length === 0 ? (\n              <div className=\"bg-white border-2 border-dashed border-slate-200 rounded-2xl p-20 text-center\">\n                <p className=\"text-slate-400\">এই ফোল্ডারে এখনো কোনো ফাইল নেই।</p>\n              </div>\n            ) : (\n              <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6\">\n                {currentFolderFiles.map((file) => (\n                  <div key={file.id} className=\"group bg-white p-5 rounded-2xl shadow-sm border border-slate-200 hover:shadow-md transition-all relative\">\n                    <div className=\"flex items-start gap-4 mb-4\">\n                      <div className=\"w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center text-2xl\">\n                        {file.type.includes('image') ? '🖼️' : file.type.includes('pdf') ? '📄' : '📁'}\n                      </div>\n                      <div className=\"flex-1 overflow-hidden\">\n                        <h3 className=\"font-bold text-slate-800 truncate\" title={file.name}>{file.name}</h3>\n                        <p className=\"text-[10px] text-slate-400\">{file.uploadDate} • {file.size}</p>\n                      </div>\n                    </div>\n                    \n                    {file.type.includes('image') && (\n                      <div className=\"mb-4 rounded-lg overflow-hidden h-32 bg-slate-50 border\">\n                        <img src={file.dataUrl} alt={file.name} className=\"w-full h-full object-cover\" />\n                      </div>\n                    )}\n\n                    <div className=\"flex items-center gap-2 border-t pt-4 mt-2 opacity-0 group-hover:opacity-100 transition-opacity\">\n                      <button \n                        onClick={() => downloadFile(file)}\n                        className=\"flex-1 bg-emerald-50 text-emerald-600 py-2 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors\"\n                      >\n                        ডাউনলোড\n                      </button>\n                      <button \n                        onClick={() => deleteFile(file.id)}\n                        className=\"p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors\"\n                      >\n                        🗑️\n                      </button>\n                    </div>\n                  </div>\n                ))}\n              </div>\n            )}\n          </div>\n        )}\n      </main>\n\n      {/* Persistent Footer/Status */}\n      <footer className=\"fixed bottom-0 right-0 p-4 pointer-events-none\">\n        {isUploading && (\n          <div className=\"bg-slate-900 text-white px-4 py-2 rounded-full text-xs shadow-2xl flex items-center gap-2 animate-bounce\">\n            <span className=\"w-2 h-2 bg-indigo-500 rounded-full animate-ping\"></span>\n            প্রসেসিং হচ্ছে...\n          </div>\n        )}\n      </footer>\n    </div>\n  );\n};\n\nexport default App;\n"
+            }
+          ]
+        }
+      ]
+    },
+    "createdTimestamp": {
+      "seconds": 1771251427,
+      "nanos": 845000000
+    },
+    "doneTimestamp": {
+      "seconds": 1771251427,
+      "nanos": 851000000
+    }
+  }
+]
