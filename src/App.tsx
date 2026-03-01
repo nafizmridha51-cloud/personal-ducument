@@ -23,7 +23,7 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, getFirebaseStorage, isFirebaseConfigured } from './lib/firebase';
+import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { 
   collection, 
@@ -34,9 +34,11 @@ import {
   deleteDoc, 
   doc, 
   updateDoc,
-  serverTimestamp 
+  serverTimestamp,
+  getDocs,
+  orderBy,
+  writeBatch
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { User, Folder, FileData } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -62,6 +64,7 @@ const App: React.FC = () => {
   });
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDemoMode, setIsDemoMode] = useState(() => {
     return localStorage.getItem('is_demo_mode') === 'true';
@@ -215,7 +218,6 @@ const App: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file || !activeFolderId || !user) return;
 
-    // Increased limit to 50MB as requested
     if (file.size > 50 * 1024 * 1024) {
       alert('ফাইলের সাইজ অনেক বড়! অনুগ্রহ করে ৫০ মেগাবাইট (50 MB) এর নিচের ফাইল আপলোড করুন।');
       return;
@@ -246,32 +248,70 @@ const App: React.FC = () => {
     }
 
     try {
-      const storage = getFirebaseStorage();
       const db = getFirebaseDb();
       
-      // 1. Upload to Firebase Storage
-      const storageRef = ref(storage, `files/${user.uid}/${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
+      // Read file as base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      
+      const fullBase64 = await base64Promise;
+      
+      // Chunk size: 700KB (to stay safe within 1MB Firestore limit)
+      const CHUNK_SIZE = 700 * 1024;
+      const chunks: string[] = [];
+      for (let i = 0; i < fullBase64.length; i += CHUNK_SIZE) {
+        chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
+      }
 
-      // 2. Save metadata to Firestore
-      await addDoc(collection(db, 'files'), {
+      // 1. Save metadata to Firestore
+      const fileDoc = await addDoc(collection(db, 'files'), {
         name: file.name,
         type: file.type,
         size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
         folderId: activeFolderId,
         userId: user.uid,
         uploadDate: new Date().toLocaleDateString('bn-BD'),
-        dataUrl: downloadURL, // We use dataUrl field to store the download URL for compatibility
-        storagePath: storageRef.fullPath,
+        dataUrl: 'CHUNKED',
+        isChunked: true,
+        chunkCount: chunks.length,
         createdAt: serverTimestamp()
       });
+
+      // 2. Save chunks to Firestore
+      // Using batches for efficiency (max 500 ops per batch)
+      let currentBatch = writeBatch(db);
+      let count = 0;
+      
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkRef = doc(collection(db, 'fileChunks'));
+        currentBatch.set(chunkRef, {
+          fileId: fileDoc.id,
+          index: i,
+          data: chunks[i],
+          userId: user.uid
+        });
+        count++;
+        
+        if (count === 400) { // Keep it safe under 500
+          await currentBatch.commit();
+          currentBatch = writeBatch(db);
+          count = 0;
+        }
+      }
+      
+      if (count > 0) {
+        await currentBatch.commit();
+      }
       
       setShowUpload(false);
     } catch (err: any) {
       console.error(err);
       if (err.code === 'permission-denied') {
-        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Storage এবং Firestore Rules চেক করুন।');
+        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Firestore Rules চেক করুন।');
       } else {
         alert('ফাইল আপলোড করতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
       }
@@ -353,6 +393,25 @@ const App: React.FC = () => {
           return;
         }
         const db = getFirebaseDb();
+        
+        // 1. Delete chunks if any
+        const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', id));
+        const chunksSnapshot = await getDocs(chunksQuery);
+        
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const chunkDoc of chunksSnapshot.docs) {
+          batch.delete(chunkDoc.ref);
+          count++;
+          if (count === 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+
+        // 2. Delete file metadata
         await deleteDoc(doc(db, 'files', id));
       } catch (err) {
         console.error(err);
@@ -377,9 +436,28 @@ const App: React.FC = () => {
         const db = getFirebaseDb();
         const folderFiles = files.filter(f => f.folderId === id);
         
-        // Delete all files in the folder first
-        const deletePromises = folderFiles.map(file => deleteDoc(doc(db, 'files', file.id)));
-        await Promise.all(deletePromises);
+        // Delete all files and their chunks
+        for (const file of folderFiles) {
+          // Delete chunks
+          const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', file.id));
+          const chunksSnapshot = await getDocs(chunksQuery);
+          
+          let batch = writeBatch(db);
+          let count = 0;
+          for (const chunkDoc of chunksSnapshot.docs) {
+            batch.delete(chunkDoc.ref);
+            count++;
+            if (count === 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              count = 0;
+            }
+          }
+          if (count > 0) await batch.commit();
+
+          // Delete metadata
+          await deleteDoc(doc(db, 'files', file.id));
+        }
         
         // Then delete the folder
         await deleteDoc(doc(db, 'folders', id));
@@ -394,13 +472,69 @@ const App: React.FC = () => {
     }
   };
 
-  const downloadFile = (file: FileData) => {
+  const downloadFile = async (file: FileData) => {
+    let dataUrl = file.dataUrl;
+
+    if (file.isChunked) {
+      setIsUploading(true); // Reusing uploading state for loading
+      try {
+        const db = getFirebaseDb();
+        const chunksQuery = query(
+          collection(db, 'fileChunks'), 
+          where('fileId', '==', file.id),
+          orderBy('index', 'asc')
+        );
+        const chunksSnapshot = await getDocs(chunksQuery);
+        let fullBase64 = '';
+        chunksSnapshot.forEach(chunkDoc => {
+          fullBase64 += chunkDoc.data().data;
+        });
+        dataUrl = fullBase64;
+      } catch (err) {
+        console.error(err);
+        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে।');
+        setIsUploading(false);
+        return;
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
     const link = document.createElement('a');
-    link.href = file.dataUrl;
+    link.href = dataUrl;
     link.download = file.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handlePreview = async (file: FileData) => {
+    if (file.isChunked && file.dataUrl === 'CHUNKED') {
+      setIsPreviewLoading(true);
+      try {
+        const db = getFirebaseDb();
+        const chunksQuery = query(
+          collection(db, 'fileChunks'), 
+          where('fileId', '==', file.id),
+          orderBy('index', 'asc')
+        );
+        const chunksSnapshot = await getDocs(chunksQuery);
+        let fullBase64 = '';
+        chunksSnapshot.forEach(chunkDoc => {
+          fullBase64 += chunkDoc.data().data;
+        });
+        
+        // Update the file object with the fetched dataUrl for the preview
+        setShowPreview({ ...file, dataUrl: fullBase64 });
+      } catch (err) {
+        console.error(err);
+        alert('প্রিভিউ লোড করতে সমস্যা হয়েছে।');
+      } finally {
+        setIsPreviewLoading(false);
+      }
+    } else {
+      setShowPreview(file);
+    }
   };
 
   if (loading) {
@@ -747,7 +881,7 @@ const App: React.FC = () => {
                             "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all",
                             file.type.includes('image') && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
                           )}
-                          onClick={() => file.type.includes('image') && setShowPreview(file)}
+                          onClick={() => file.type.includes('image') && handlePreview(file)}
                         >
                           {file.type.includes('image') ? (
                             <ImageIcon className="w-6 h-6 text-indigo-500" />
@@ -782,7 +916,7 @@ const App: React.FC = () => {
                             file.type.includes('image') && "cursor-pointer hover:text-indigo-600"
                           )} 
                           title={file.name}
-                          onClick={() => file.type.includes('image') && setShowPreview(file)}
+                          onClick={() => file.type.includes('image') && handlePreview(file)}
                         >
                           {file.name}
                         </h3>
@@ -792,7 +926,7 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-2">
                         {file.type.includes('image') && (
                           <button 
-                            onClick={() => setShowPreview(file)}
+                            onClick={() => handlePreview(file)}
                             className="flex-1 bg-indigo-50 text-indigo-600 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
                           >
                             <Eye className="w-3.5 h-3.5" />
@@ -1048,6 +1182,16 @@ const App: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Persistent Footer/Status */}
+      <footer className="fixed bottom-0 right-0 p-4 pointer-events-none z-[100]">
+        {(isUploading || isPreviewLoading) && (
+          <div className="bg-slate-900 text-white px-4 py-2 rounded-full text-xs shadow-2xl flex items-center gap-2 animate-bounce">
+            <span className="w-2 h-2 bg-indigo-500 rounded-full animate-ping"></span>
+            {isPreviewLoading ? 'প্রিভিউ লোড হচ্ছে...' : 'প্রসেসিং হচ্ছে...'}
+          </div>
+        )}
+      </footer>
 
       {/* Global Styles */}
       <style>{`

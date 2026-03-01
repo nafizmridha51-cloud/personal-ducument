@@ -24,5 +24,7 @@ export interface FileData {
   folderId: string;
   userId: string;
   uploadDate: string;
-  dataUrl: string; // Base64 representation
+  dataUrl: string; // Base64 representation or "CHUNKED"
+  isChunked?: boolean;
+  chunkCount?: number;
 }
