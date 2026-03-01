@@ -20,7 +20,9 @@ import {
   ChevronRight,
   Plus,
   Eye,
-  X
+  X,
+  Pencil,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
@@ -77,6 +79,8 @@ const App: React.FC = () => {
   const [showUnlock, setShowUnlock] = useState<Folder | null>(null);
   const [showForgot, setShowForgot] = useState<Folder | null>(null);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [editingFileName, setEditingFileName] = useState('');
   
   // Form States
   const [newFolderName, setNewFolderName] = useState('');
@@ -520,6 +524,23 @@ const App: React.FC = () => {
       } finally {
         setIsDeleting(null);
       }
+    }
+  };
+
+  const renameFile = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    try {
+      if (isDemoMode) {
+        setFiles(files.map(f => f.id === id ? { ...f, name: newName } : f));
+        setEditingFileId(null);
+        return;
+      }
+      const db = getFirebaseDb();
+      await updateDoc(doc(db, 'files', id), { name: newName });
+      setEditingFileId(null);
+    } catch (err) {
+      console.error(err);
+      alert('নাম পরিবর্তন করতে সমস্যা হয়েছে।');
     }
   };
 
@@ -996,6 +1017,16 @@ const App: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-1">
                           <button 
+                            onClick={() => {
+                              setEditingFileId(file.id);
+                              setEditingFileName(file.name);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                            title="নাম পরিবর্তন করুন"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button 
                             onClick={() => deleteFile(file.id)}
                             disabled={isDeleting === file.id}
                             className={cn(
@@ -1015,16 +1046,44 @@ const App: React.FC = () => {
                       </div>
                       
                       <div className="mb-4">
-                        <h3 
-                          className={cn(
-                            "font-bold text-slate-800 truncate text-sm transition-colors",
-                            file.type.includes('image') && "cursor-pointer hover:text-indigo-600"
-                          )} 
-                          title={file.name}
-                          onClick={() => file.type.includes('image') && handlePreview(file)}
-                        >
-                          {file.name}
-                        </h3>
+                        {editingFileId === file.id ? (
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="text"
+                              value={editingFileName}
+                              onChange={(e) => setEditingFileName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') renameFile(file.id, editingFileName);
+                                if (e.key === 'Escape') setEditingFileId(null);
+                              }}
+                              className="flex-1 text-sm p-1 border-b-2 border-indigo-500 outline-none bg-indigo-50/50 rounded"
+                              autoFocus
+                            />
+                            <button 
+                              onClick={() => renameFile(file.id, editingFileName)}
+                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => setEditingFileId(null)}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <h3 
+                            className={cn(
+                              "font-bold text-slate-800 truncate text-sm transition-colors",
+                              file.type.includes('image') && "cursor-pointer hover:text-indigo-600"
+                            )} 
+                            title={file.name}
+                            onClick={() => file.type.includes('image') && handlePreview(file)}
+                          >
+                            {file.name}
+                          </h3>
+                        )}
                         <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">{file.size} • {file.uploadDate}</p>
                       </div>
 
