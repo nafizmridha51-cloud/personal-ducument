@@ -23,7 +23,7 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
+import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, getFirebaseStorage, isFirebaseConfigured } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { 
   collection, 
@@ -36,6 +36,7 @@ import {
   updateDoc,
   serverTimestamp 
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { User, Folder, FileData } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -200,8 +201,13 @@ const App: React.FC = () => {
       setNewFolderName('');
       setFolderPassword('');
       setShowAddFolder(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      if (err.code === 'permission-denied') {
+        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Firestore Rules চেক করুন।');
+      } else {
+        alert('ফোল্ডার সেভ করতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+      }
     }
   };
 
@@ -209,18 +215,23 @@ const App: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file || !activeFolderId || !user) return;
 
+    // Increased limit to 50MB as requested
+    if (file.size > 50 * 1024 * 1024) {
+      alert('ফাইলের সাইজ অনেক বড়! অনুগ্রহ করে ৫০ মেগাবাইট (50 MB) এর নিচের ফাইল আপলোড করুন।');
+      return;
+    }
+
     setIsUploading(true);
-    const reader = new FileReader();
     
-    reader.onload = async (e) => {
-      const base64Data = e.target?.result as string;
-      
-      if (isDemoMode) {
+    if (isDemoMode) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64Data = e.target?.result as string;
         const newFile: FileData = {
           id: Math.random().toString(36).substr(2, 9),
           name: file.name,
           type: file.type,
-          size: (file.size / 1024).toFixed(2) + ' KB',
+          size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
           folderId: activeFolderId,
           userId: user.uid,
           uploadDate: new Date().toLocaleDateString('bn-BD'),
@@ -229,30 +240,44 @@ const App: React.FC = () => {
         setFiles([...files, newFile]);
         setShowUpload(false);
         setIsUploading(false);
-        return;
-      }
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
 
-      try {
-        const db = getFirebaseDb();
-        await addDoc(collection(db, 'files'), {
-          name: file.name,
-          type: file.type,
-          size: (file.size / 1024).toFixed(2) + ' KB',
-          folderId: activeFolderId,
-          userId: user.uid,
-          uploadDate: new Date().toLocaleDateString('bn-BD'),
-          dataUrl: base64Data,
-          createdAt: serverTimestamp()
-        });
-        setShowUpload(false);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsUploading(false);
-      }
-    };
+    try {
+      const storage = getFirebaseStorage();
+      const db = getFirebaseDb();
+      
+      // 1. Upload to Firebase Storage
+      const storageRef = ref(storage, `files/${user.uid}/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
 
-    reader.readAsDataURL(file);
+      // 2. Save metadata to Firestore
+      await addDoc(collection(db, 'files'), {
+        name: file.name,
+        type: file.type,
+        size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+        folderId: activeFolderId,
+        userId: user.uid,
+        uploadDate: new Date().toLocaleDateString('bn-BD'),
+        dataUrl: downloadURL, // We use dataUrl field to store the download URL for compatibility
+        storagePath: storageRef.fullPath,
+        createdAt: serverTimestamp()
+      });
+      
+      setShowUpload(false);
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'permission-denied') {
+        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Storage এবং Firestore Rules চেক করুন।');
+      } else {
+        alert('ফাইল আপলোড করতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+      }
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleUnlock = async () => {

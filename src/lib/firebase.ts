@@ -2,6 +2,7 @@
 import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth } from "firebase/auth";
 import { initializeFirestore, Firestore } from "firebase/firestore";
+import { getStorage, FirebaseStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -20,6 +21,7 @@ export const isFirebaseConfigured =
 let app: FirebaseApp;
 let auth: Auth;
 let db: Firestore;
+let storage: FirebaseStorage;
 
 const getFirebaseApp = () => {
   if (!isFirebaseConfigured) {
@@ -48,6 +50,13 @@ export const getFirebaseDb = () => {
     });
   }
   return db;
+};
+
+export const getFirebaseStorage = () => {
+  if (!storage) {
+    storage = getStorage(getFirebaseApp());
+  }
+  return storage;
 };
 
 export const googleProvider = new GoogleAuthProvider();
