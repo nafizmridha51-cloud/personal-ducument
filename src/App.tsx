@@ -475,24 +475,35 @@ const App: React.FC = () => {
   const downloadFile = async (file: FileData) => {
     let dataUrl = file.dataUrl;
 
-    if (file.isChunked) {
+    if (file.isChunked && dataUrl === 'CHUNKED') {
       setIsUploading(true); // Reusing uploading state for loading
       try {
+        console.log("Fetching chunks for download:", file.id);
         const db = getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          orderBy('index', 'asc')
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
+        
+        if (chunksSnapshot.empty) {
+          throw new Error("No chunks found for this file");
+        }
+
+        // Sort chunks in memory to avoid Firebase Index requirement
+        const sortedChunks = chunksSnapshot.docs
+          .map(doc => doc.data())
+          .sort((a, b) => a.index - b.index);
+
         let fullBase64 = '';
-        chunksSnapshot.forEach(chunkDoc => {
-          fullBase64 += chunkDoc.data().data;
+        sortedChunks.forEach(chunk => {
+          fullBase64 += chunk.data;
         });
         dataUrl = fullBase64;
+        console.log("File reconstructed successfully, length:", dataUrl.length);
       } catch (err) {
-        console.error(err);
-        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে।');
+        console.error("Download error:", err);
+        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি।');
         setIsUploading(false);
         return;
       } finally {
@@ -512,22 +523,33 @@ const App: React.FC = () => {
     if (file.isChunked && file.dataUrl === 'CHUNKED') {
       setIsPreviewLoading(true);
       try {
+        console.log("Fetching chunks for preview:", file.id);
         const db = getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          orderBy('index', 'asc')
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
+        
+        if (chunksSnapshot.empty) {
+          throw new Error("No chunks found for this file");
+        }
+
+        // Sort chunks in memory
+        const sortedChunks = chunksSnapshot.docs
+          .map(doc => doc.data())
+          .sort((a, b) => a.index - b.index);
+
         let fullBase64 = '';
-        chunksSnapshot.forEach(chunkDoc => {
-          fullBase64 += chunkDoc.data().data;
+        sortedChunks.forEach(chunk => {
+          fullBase64 += chunk.data;
         });
         
         // Update the file object with the fetched dataUrl for the preview
         setShowPreview({ ...file, dataUrl: fullBase64 });
+        console.log("Preview loaded successfully");
       } catch (err) {
-        console.error(err);
+        console.error("Preview error:", err);
         alert('প্রিভিউ লোড করতে সমস্যা হয়েছে।');
       } finally {
         setIsPreviewLoading(false);
