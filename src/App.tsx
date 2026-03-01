@@ -235,9 +235,10 @@ const App: React.FC = () => {
           type: file.type,
           size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
           folderId: activeFolderId,
-          userId: user.uid,
+          userId: user?.uid || 'demo-user',
           uploadDate: new Date().toLocaleDateString('bn-BD'),
-          dataUrl: base64Data
+          dataUrl: base64Data,
+          isChunked: false
         };
         setFiles([...files, newFile]);
         setShowUpload(false);
@@ -247,6 +248,7 @@ const App: React.FC = () => {
       return;
     }
 
+    let fileDocRef: any = null;
     try {
       const db = getFirebaseDb();
       
@@ -267,6 +269,8 @@ const App: React.FC = () => {
         chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
       }
 
+      console.log(`Uploading file in ${chunks.length} chunks...`);
+
       // 1. Save metadata to Firestore
       const fileDoc = await addDoc(collection(db, 'files'), {
         name: file.name,
@@ -280,9 +284,10 @@ const App: React.FC = () => {
         chunkCount: chunks.length,
         createdAt: serverTimestamp()
       });
+      
+      fileDocRef = fileDoc;
 
       // 2. Save chunks to Firestore
-      // Using batches for efficiency (max 500 ops per batch)
       let currentBatch = writeBatch(db);
       let count = 0;
       
@@ -296,7 +301,7 @@ const App: React.FC = () => {
         });
         count++;
         
-        if (count === 400) { // Keep it safe under 500
+        if (count === 400) {
           await currentBatch.commit();
           currentBatch = writeBatch(db);
           count = 0;
@@ -307,9 +312,22 @@ const App: React.FC = () => {
         await currentBatch.commit();
       }
       
+      console.log("File and chunks uploaded successfully.");
       setShowUpload(false);
     } catch (err: any) {
-      console.error(err);
+      console.error("Upload failed:", err);
+      
+      // Cleanup: Delete metadata if chunks failed
+      if (fileDocRef) {
+        try {
+          const db = getFirebaseDb();
+          await deleteDoc(fileDocRef);
+          console.log("Cleaned up file metadata after failed chunk upload.");
+        } catch (cleanupErr) {
+          console.error("Failed to cleanup file metadata:", cleanupErr);
+        }
+      }
+
       if (err.code === 'permission-denied') {
         alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Firestore Rules চেক করুন।');
       } else {
@@ -385,63 +403,31 @@ const App: React.FC = () => {
   };
 
   const deleteFile = async (id: string) => {
-    if (confirm('আপনি কি এই নথিটি মুছে ফেলতে চান?')) {
+    if (window.confirm('আপনি কি এই নথিটি মুছে ফেলতে চান?')) {
       setIsDeleting(id);
       try {
         if (isDemoMode) {
           setFiles(files.filter(f => f.id !== id));
+          setIsDeleting(null);
           return;
         }
+        
+        if (!user) throw new Error("User not authenticated");
+        
         const db = getFirebaseDb();
+        console.log("Deleting file:", id);
         
         // 1. Delete chunks if any
-        const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', id));
+        const chunksQuery = query(
+          collection(db, 'fileChunks'), 
+          where('fileId', '==', id),
+          where('userId', '==', user.uid)
+        );
         const chunksSnapshot = await getDocs(chunksQuery);
         
-        let batch = writeBatch(db);
-        let count = 0;
-        for (const chunkDoc of chunksSnapshot.docs) {
-          batch.delete(chunkDoc.ref);
-          count++;
-          if (count === 400) {
-            await batch.commit();
-            batch = writeBatch(db);
-            count = 0;
-          }
-        }
-        if (count > 0) await batch.commit();
-
-        // 2. Delete file metadata
-        await deleteDoc(doc(db, 'files', id));
-      } catch (err) {
-        console.error(err);
-        alert('ফাইলটি মুছতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
-      } finally {
-        setIsDeleting(null);
-      }
-    }
-  };
-
-  const deleteFolder = async (id: string) => {
-    if (confirm('এই ফোল্ডারটি মুছলে এর ভেতরের সব ফাইলও মুছে যাবে। আপনি কি নিশ্চিত?')) {
-      setIsDeleting(id);
-      try {
-        setUnlockedFolderIds(unlockedFolderIds.filter(fid => fid !== id));
-        if (isDemoMode) {
-          setFiles(files.filter(f => f.folderId !== id));
-          setFolders(folders.filter(f => f.id !== id));
-          if (activeFolderId === id) setActiveFolderId(null);
-          return;
-        }
-        const db = getFirebaseDb();
-        const folderFiles = files.filter(f => f.folderId === id);
+        console.log(`Found ${chunksSnapshot.size} chunks to delete for file ${id}`);
         
-        // Delete all files and their chunks
-        for (const file of folderFiles) {
-          // Delete chunks
-          const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', file.id));
-          const chunksSnapshot = await getDocs(chunksQuery);
-          
+        if (!chunksSnapshot.empty) {
           let batch = writeBatch(db);
           let count = 0;
           for (const chunkDoc of chunksSnapshot.docs) {
@@ -454,6 +440,66 @@ const App: React.FC = () => {
             }
           }
           if (count > 0) await batch.commit();
+        }
+
+        // 2. Delete file metadata
+        await deleteDoc(doc(db, 'files', id));
+        console.log("File metadata deleted successfully");
+        
+        // Optimistic update
+        setFiles(prev => prev.filter(f => f.id !== id));
+      } catch (err: any) {
+        console.error("Delete file error:", err);
+        alert('ফাইলটি মুছতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+      } finally {
+        setIsDeleting(null);
+      }
+    }
+  };
+
+  const deleteFolder = async (id: string) => {
+    if (window.confirm('এই ফোল্ডারটি মুছলে এর ভেতরের সব ফাইলও মুছে যাবে। আপনি কি নিশ্চিত?')) {
+      setIsDeleting(id);
+      try {
+        setUnlockedFolderIds(unlockedFolderIds.filter(fid => fid !== id));
+        if (isDemoMode) {
+          setFiles(files.filter(f => f.folderId !== id));
+          setFolders(folders.filter(f => f.id !== id));
+          if (activeFolderId === id) setActiveFolderId(null);
+          setIsDeleting(null);
+          return;
+        }
+        
+        if (!user) throw new Error("User not authenticated");
+        
+        const db = getFirebaseDb();
+        const folderFiles = files.filter(f => f.folderId === id);
+        console.log(`Deleting folder ${id} with ${folderFiles.length} files`);
+        
+        // Delete all files and their chunks
+        for (const file of folderFiles) {
+          // Delete chunks
+          const chunksQuery = query(
+            collection(db, 'fileChunks'), 
+            where('fileId', '==', file.id),
+            where('userId', '==', user.uid)
+          );
+          const chunksSnapshot = await getDocs(chunksQuery);
+          
+          if (!chunksSnapshot.empty) {
+            let batch = writeBatch(db);
+            let count = 0;
+            for (const chunkDoc of chunksSnapshot.docs) {
+              batch.delete(chunkDoc.ref);
+              count++;
+              if (count === 400) {
+                await batch.commit();
+                batch = writeBatch(db);
+                count = 0;
+              }
+            }
+            if (count > 0) await batch.commit();
+          }
 
           // Delete metadata
           await deleteDoc(doc(db, 'files', file.id));
@@ -461,11 +507,16 @@ const App: React.FC = () => {
         
         // Then delete the folder
         await deleteDoc(doc(db, 'folders', id));
+        console.log("Folder and its contents deleted successfully");
         
         if (activeFolderId === id) setActiveFolderId(null);
-      } catch (err) {
-        console.error(err);
-        alert('ফোল্ডারটি মুছতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+        
+        // Optimistic update
+        setFolders(prev => prev.filter(f => f.id !== id));
+        setFiles(prev => prev.filter(f => f.folderId !== id));
+      } catch (err: any) {
+        console.error("Delete folder error:", err);
+        alert('ফোল্ডারটি মুছতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
       } finally {
         setIsDeleting(null);
       }
@@ -475,20 +526,29 @@ const App: React.FC = () => {
   const downloadFile = async (file: FileData) => {
     let dataUrl = file.dataUrl;
 
-    if (file.isChunked && dataUrl === 'CHUNKED') {
+    if (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED') {
       setIsUploading(true); // Reusing uploading state for loading
       try {
-        console.log("Fetching chunks for download:", file.id);
+        console.log("Attempting to download chunked file. ID:", file.id);
         const db = getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
+          where('fileId', '==', file.id),
+          where('userId', '==', user.uid)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
         if (chunksSnapshot.empty) {
-          throw new Error("No chunks found for this file");
+          console.error("No chunks found in Firestore for file ID:", file.id);
+          if (window.confirm('এই ফাইলটির কোনো ডেটা খুঁজে পাওয়া যায়নি। সম্ভবত এটি সঠিকভাবে আপলোড হয়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+            await deleteDoc(doc(db, 'files', file.id));
+            setFiles(files.filter(f => f.id !== file.id));
+          }
+          setIsUploading(false);
+          return;
         }
+
+        console.log(`Found ${chunksSnapshot.size} chunks for file ${file.id}`);
 
         // Sort chunks in memory to avoid Firebase Index requirement
         const sortedChunks = chunksSnapshot.docs
@@ -500,10 +560,10 @@ const App: React.FC = () => {
           fullBase64 += chunk.data;
         });
         dataUrl = fullBase64;
-        console.log("File reconstructed successfully, length:", dataUrl.length);
-      } catch (err) {
-        console.error("Download error:", err);
-        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি।');
+        console.log("File reconstructed successfully. Total length:", dataUrl.length);
+      } catch (err: any) {
+        console.error("Download error details:", err);
+        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি বা ডেটাবেস থেকে মুছে গেছে।');
         setIsUploading(false);
         return;
       } finally {
@@ -511,29 +571,48 @@ const App: React.FC = () => {
       }
     }
 
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = file.name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (!dataUrl || dataUrl === 'CHUNKED') {
+      alert('ফাইলের ডেটা পাওয়া যায়নি।');
+      return;
+    }
+
+    try {
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Link trigger error:", err);
+      alert('ডাউনলোড শুরু করতে সমস্যা হয়েছে।');
+    }
   };
 
   const handlePreview = async (file: FileData) => {
-    if (file.isChunked && file.dataUrl === 'CHUNKED') {
+    if (!isDemoMode && file.isChunked && file.dataUrl === 'CHUNKED') {
       setIsPreviewLoading(true);
       try {
-        console.log("Fetching chunks for preview:", file.id);
+        console.log("Attempting to preview chunked file. ID:", file.id);
         const db = getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
+          where('fileId', '==', file.id),
+          where('userId', '==', user.uid)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
         if (chunksSnapshot.empty) {
-          throw new Error("No chunks found for this file");
+          console.error("No chunks found in Firestore for preview. File ID:", file.id);
+          if (window.confirm('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না কারণ এর কোনো ডেটা খুঁজে পাওয়া যায়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+            await deleteDoc(doc(db, 'files', file.id));
+            setFiles(files.filter(f => f.id !== file.id));
+          }
+          setIsPreviewLoading(false);
+          return;
         }
+
+        console.log(`Found ${chunksSnapshot.size} chunks for preview of file ${file.id}`);
 
         // Sort chunks in memory
         const sortedChunks = chunksSnapshot.docs
@@ -547,14 +626,18 @@ const App: React.FC = () => {
         
         // Update the file object with the fetched dataUrl for the preview
         setShowPreview({ ...file, dataUrl: fullBase64 });
-        console.log("Preview loaded successfully");
-      } catch (err) {
-        console.error("Preview error:", err);
-        alert('প্রিভিউ লোড করতে সমস্যা হয়েছে।');
+        console.log("Preview reconstructed successfully. Total length:", fullBase64.length);
+      } catch (err: any) {
+        console.error("Preview error details:", err);
+        alert('প্রিভিউ লোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি।');
       } finally {
         setIsPreviewLoading(false);
       }
     } else {
+      if (file.dataUrl === 'CHUNKED') {
+        alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
+        return;
+      }
       setShowPreview(file);
     }
   };
