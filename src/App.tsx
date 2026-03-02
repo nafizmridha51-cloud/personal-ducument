@@ -78,9 +78,18 @@ const App: React.FC = () => {
   const [showUpload, setShowUpload] = useState(false);
   const [showUnlock, setShowUnlock] = useState<Folder | null>(null);
   const [showForgot, setShowForgot] = useState<Folder | null>(null);
+  const [recoveryStep, setRecoveryStep] = useState<'send' | 'verify' | 'reset'>('send');
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [userInputCode, setUserInputCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [isSendingCode, setIsSendingCode] = useState(false);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
+  const [showLockFolder, setShowLockFolder] = useState<Folder | null>(null);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editingFileName, setEditingFileName] = useState('');
+  const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingFolderName, setEditingFolderName] = useState('');
   
   // Form States
   const [newFolderName, setNewFolderName] = useState('');
@@ -387,22 +396,55 @@ const App: React.FC = () => {
   };
   const handleRecovery = async () => {
     if (!showForgot || !user) return;
-    alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে। (সিমুলেশন)`);
-    const newPass = prompt('নতুন পাসওয়ার্ড দিন:');
-    if (newPass) {
+    
+    setIsSendingCode(true);
+    setError('');
+    
+    // Generate a 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedCode(code);
+
+    // In a real app, you'd call a backend to send an email here.
+    // For this demo, we'll simulate the delay and show the code in an alert.
+    setTimeout(() => {
+      setIsSendingCode(false);
+      setRecoveryStep('verify');
+      alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(বাস্তব অ্যাপে এটি আপনার ইমেইলে পাঠানো হতো)`);
+    }, 1500);
+  };
+
+  const handleVerifyCode = () => {
+    if (userInputCode === generatedCode) {
+      setRecoveryStep('reset');
+      setError('');
+    } else {
+      setError('ভুল ভেরিফিকেশন কোড!');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!showForgot || !newPassword) return;
+    
+    try {
       if (isDemoMode) {
-        setFolders(folders.map(f => f.id === showForgot.id ? { ...f, password: newPass, isLocked: true } : f));
-        setShowForgot(null);
-        alert('পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে।');
-        return;
+        setFolders(folders.map(f => f.id === showForgot.id ? { ...f, password: newPassword, isLocked: true } : f));
+      } else {
+        const db = getFirebaseDb();
+        await updateDoc(doc(db, 'folders', showForgot.id), { 
+          password: newPassword,
+          isLocked: true 
+        });
       }
-      const db = getFirebaseDb();
-      await updateDoc(doc(db, 'folders', showForgot.id), {
-        password: newPass,
-        isLocked: true
-      });
+      
       setShowForgot(null);
+      setRecoveryStep('send');
+      setNewPassword('');
+      setUserInputCode('');
+      setGeneratedCode('');
       alert('পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে।');
+    } catch (err) {
+      console.error(err);
+      alert('পাসওয়ার্ড পরিবর্তন করতে সমস্যা হয়েছে।');
     }
   };
 
@@ -541,6 +583,65 @@ const App: React.FC = () => {
     } catch (err) {
       console.error(err);
       alert('নাম পরিবর্তন করতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const renameFolder = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    try {
+      if (isDemoMode) {
+        setFolders(folders.map(f => f.id === id ? { ...f, name: newName } : f));
+        setEditingFolderId(null);
+        return;
+      }
+      const db = getFirebaseDb();
+      await updateDoc(doc(db, 'folders', id), { name: newName });
+      setEditingFolderId(null);
+    } catch (err) {
+      console.error(err);
+      alert('ফোল্ডারের নাম পরিবর্তন করতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const removeFolderLock = async (folder: Folder) => {
+    const pass = window.prompt('পাসওয়ার্ডটি মুছতে বর্তমান পাসওয়ার্ডটি দিন:');
+    if (!pass) return;
+    
+    if (pass !== folder.password) {
+      alert('ভুল পাসওয়ার্ড!');
+      return;
+    }
+
+    try {
+      if (isDemoMode) {
+        setFolders(folders.map(f => f.id === folder.id ? { ...f, password: '', isLocked: false } : f));
+        return;
+      }
+      const db = getFirebaseDb();
+      await updateDoc(doc(db, 'folders', folder.id), { password: '', isLocked: false });
+    } catch (err) {
+      console.error(err);
+      alert('পাসওয়ার্ড মুছতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const handleSetFolderLock = async () => {
+    if (!showLockFolder || !folderPassword) return;
+    
+    try {
+      if (isDemoMode) {
+        setFolders(folders.map(f => f.id === showLockFolder.id ? { ...f, password: folderPassword, isLocked: true } : f));
+        setShowLockFolder(null);
+        setFolderPassword('');
+        return;
+      }
+      const db = getFirebaseDb();
+      await updateDoc(doc(db, 'folders', showLockFolder.id), { password: folderPassword, isLocked: true });
+      setShowLockFolder(null);
+      setFolderPassword('');
+    } catch (err) {
+      console.error(err);
+      alert('লক করতে সমস্যা হয়েছে।');
     }
   };
 
@@ -858,48 +959,126 @@ const App: React.FC = () => {
               {folders.map((folder) => {
                 const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
                 return (
-                  <div key={folder.id} className="group flex items-center gap-1">
-                    <button
-                      onClick={() => {
-                        if (isLocked) {
-                          setShowUnlock(folder);
-                        } else {
-                          setActiveFolderId(folder.id);
-                        }
-                      }}
-                      className={cn(
-                        "flex-1 flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
-                        activeFolderId === folder.id 
-                          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' 
-                          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
-                      )}
-                    >
-                      <div className="relative">
-                        <FolderIcon className={cn("w-5 h-5", activeFolderId === folder.id ? "text-white" : "text-indigo-500")} />
-                        {folder.password && (
-                          <div className="absolute -top-1 -right-1 bg-white rounded-full p-0.5 shadow-sm">
-                            {isLocked ? <Lock className="w-2 h-2 text-amber-600" /> : <Unlock className="w-2 h-2 text-emerald-600" />}
-                          </div>
-                        )}
+                  <div key={folder.id} className="group relative flex items-center gap-1">
+                    {editingFolderId === folder.id ? (
+                      <div className="flex-1 flex items-center gap-2 p-2 bg-slate-800/50 rounded-xl border border-indigo-500/50">
+                        <input 
+                          autoFocus
+                          className="flex-1 bg-transparent text-white text-sm px-1 outline-none"
+                          value={editingFolderName}
+                          onChange={(e) => setEditingFolderName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameFolder(folder.id, editingFolderName);
+                            if (e.key === 'Escape') setEditingFolderId(null);
+                          }}
+                        />
+                        <button onClick={() => renameFolder(folder.id, editingFolderName)} className="text-emerald-500 p-1 hover:bg-emerald-500/10 rounded"><Check className="w-4 h-4" /></button>
+                        <button onClick={() => setEditingFolderId(null)} className="text-rose-500 p-1 hover:bg-rose-500/10 rounded"><X className="w-4 h-4" /></button>
                       </div>
-                      <span className="text-sm font-medium truncate">{folder.name}</span>
-                    </button>
-                    <button 
-                      onClick={() => deleteFolder(folder.id)}
-                      disabled={isDeleting === folder.id}
-                      className={cn(
-                        "p-2 transition-all rounded-lg",
-                        isDeleting === folder.id 
-                          ? "opacity-50 cursor-not-allowed" 
-                          : "md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-rose-400 hover:bg-rose-400/10"
-                      )}
-                    >
-                      {isDeleting === folder.id ? (
-                        <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (isLocked) {
+                              setShowUnlock(folder);
+                            } else {
+                              setActiveFolderId(folder.id);
+                            }
+                          }}
+                          className={cn(
+                            "flex-1 flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
+                            activeFolderId === folder.id 
+                              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' 
+                              : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                          )}
+                        >
+                          <div className="relative">
+                            <FolderIcon className={cn("w-5 h-5", activeFolderId === folder.id ? "text-white" : "text-indigo-500")} />
+                            {folder.password && (
+                              <div className="absolute -top-1 -right-1 bg-white rounded-full p-0.5 shadow-sm">
+                                {isLocked ? <Lock className="w-2 h-2 text-amber-600" /> : <Unlock className="w-2 h-2 text-emerald-600" />}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-sm font-medium truncate">{folder.name}</span>
+                        </button>
+                        
+                        <div className="relative">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveFolderMenuId(activeFolderMenuId === folder.id ? null : folder.id);
+                            }}
+                            className={cn(
+                              "p-2 transition-all rounded-lg",
+                              activeFolderMenuId === folder.id 
+                                ? "text-white bg-slate-800" 
+                                : "md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-white hover:bg-slate-800"
+                            )}
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                          
+                          {activeFolderMenuId === folder.id && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setActiveFolderMenuId(null)} />
+                              <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 py-1 overflow-hidden">
+                                <button 
+                                  onClick={() => {
+                                    setEditingFolderId(folder.id);
+                                    setEditingFolderName(folder.name);
+                                    setActiveFolderMenuId(null);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" /> নাম পরিবর্তন
+                                </button>
+                                
+                                {folder.password ? (
+                                  <button 
+                                    onClick={() => {
+                                      removeFolderLock(folder);
+                                      setActiveFolderMenuId(null);
+                                    }}
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-amber-400 hover:bg-slate-700 transition-colors"
+                                  >
+                                    <Unlock className="w-3.5 h-3.5" /> লক মুছুন
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => {
+                                      setShowLockFolder(folder);
+                                      setActiveFolderMenuId(null);
+                                    }}
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-indigo-400 hover:bg-slate-700 transition-colors"
+                                  >
+                                    <Lock className="w-3.5 h-3.5" /> লক করুন
+                                  </button>
+                                )}
+                                
+                                <div className="h-px bg-slate-700/50 my-1" />
+                                
+                                <button 
+                                  onClick={() => {
+                                    deleteFolder(folder.id);
+                                    setActiveFolderMenuId(null);
+                                  }}
+                                  disabled={isDeleting === folder.id}
+                                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+                                >
+                                  {isDeleting === folder.id ? (
+                                    <div className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                  মুছুন
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -1170,6 +1349,57 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {/* Lock Folder Modal */}
+        {showLockFolder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm p-8 rounded-[32px] shadow-2xl"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-indigo-50 rounded-2xl">
+                  <Lock className="w-6 h-6 text-indigo-600" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900">ফোল্ডার লক করুন</h3>
+              </div>
+              
+              <p className="text-sm text-slate-500 mb-6 font-medium">"{showLockFolder.name}" ফোল্ডারটির জন্য একটি পাসওয়ার্ড দিন।</p>
+              
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase text-slate-400 font-bold tracking-wider ml-1">পাসওয়ার্ড</label>
+                  <input 
+                    type="password" 
+                    placeholder="পাসওয়ার্ড দিন" 
+                    value={folderPassword}
+                    onChange={(e) => setFolderPassword(e.target.value)}
+                    className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all text-center tracking-widest"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    onClick={() => { setShowLockFolder(null); setFolderPassword(''); }}
+                    className="flex-1 py-3 text-slate-500 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
+                  >
+                    বাতিল
+                  </button>
+                  <button 
+                    onClick={handleSetFolderLock}
+                    disabled={!folderPassword}
+                    className="flex-1 py-3 bg-indigo-600 text-white font-bold text-sm rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
+                  >
+                    লক করুন
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {/* Upload Modal */}
         {showUpload && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -1245,7 +1475,15 @@ const App: React.FC = () => {
               </button>
               
               <button 
-                onClick={() => { setShowUnlock(null); setShowForgot(showUnlock); }}
+                onClick={() => { 
+                  setShowUnlock(null); 
+                  setShowForgot(showUnlock); 
+                  setRecoveryStep('send');
+                  setError('');
+                  setUserInputCode('');
+                  setGeneratedCode('');
+                  setNewPassword('');
+                }}
                 className="text-xs text-indigo-600 font-bold hover:underline"
               >
                 পাসওয়ার্ড ভুলে গেছেন?
@@ -1270,26 +1508,95 @@ const App: React.FC = () => {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white w-full max-w-sm p-8 rounded-[32px] shadow-2xl text-center"
             >
-              <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                <Mail className="w-8 h-8 text-indigo-600" />
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">পাসওয়ার্ড রিকভারি</h3>
-              <p className="text-sm text-slate-500 mb-8">আপনার জিমেইল ভেরিফিকেশনের মাধ্যমে পাসওয়ার্ড রিসেট করুন।</p>
-              
-              <div className="p-4 bg-slate-50 rounded-2xl mb-8 text-left">
-                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">আপনার ইমেইল</p>
-                <p className="text-sm font-bold text-slate-700">{user.email}</p>
-              </div>
+              {recoveryStep === 'send' && (
+                <>
+                  <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <Mail className="w-8 h-8 text-indigo-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">পাসওয়ার্ড রিকভারি</h3>
+                  <p className="text-sm text-slate-500 mb-8">আপনার জিমেইল ভেরিফিকেশনের মাধ্যমে পাসওয়ার্ড রিসেট করুন।</p>
+                  
+                  <div className="p-4 bg-slate-50 rounded-2xl mb-8 text-left">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">আপনার ইমেইল</p>
+                    <p className="text-sm font-bold text-slate-700">{user.email}</p>
+                  </div>
+                  
+                  <button 
+                    onClick={handleRecovery}
+                    disabled={isSendingCode}
+                    className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4 flex items-center justify-center gap-2"
+                  >
+                    {isSendingCode ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      'ভেরিফিকেশন কোড পাঠান'
+                    )}
+                  </button>
+                </>
+              )}
+
+              {recoveryStep === 'verify' && (
+                <>
+                  <div className="w-16 h-16 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <Key className="w-8 h-8 text-amber-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">কোড যাচাই করুন</h3>
+                  <p className="text-sm text-slate-500 mb-8">আপনার ইমেইলে পাঠানো ৬ ডিজিটের কোডটি দিন।</p>
+                  
+                  <input 
+                    type="text" 
+                    maxLength={6}
+                    placeholder="০০০০০০" 
+                    value={userInputCode}
+                    onChange={(e) => setUserInputCode(e.target.value)}
+                    className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl mb-4 text-center tracking-[0.5em] font-bold text-xl focus:border-indigo-500 outline-none transition-all"
+                    autoFocus
+                  />
+                  
+                  {error && <p className="text-rose-500 text-xs mb-4 flex items-center justify-center gap-1"><AlertCircle className="w-3 h-3" /> {error}</p>}
+                  
+                  <button 
+                    onClick={handleVerifyCode}
+                    className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
+                  >
+                    যাচাই করুন
+                  </button>
+                </>
+              )}
+
+              {recoveryStep === 'reset' && (
+                <>
+                  <div className="w-16 h-16 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <Lock className="w-8 h-8 text-emerald-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">নতুন পাসওয়ার্ড</h3>
+                  <p className="text-sm text-slate-500 mb-8">ফোল্ডারটির জন্য একটি নতুন পাসওয়ার্ড সেট করুন।</p>
+                  
+                  <input 
+                    type="password" 
+                    placeholder="নতুন পাসওয়ার্ড" 
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl mb-6 text-center tracking-widest focus:border-indigo-500 outline-none transition-all"
+                    autoFocus
+                  />
+                  
+                  <button 
+                    onClick={handleResetPassword}
+                    disabled={!newPassword}
+                    className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
+                  >
+                    পাসওয়ার্ড সেট করুন
+                  </button>
+                </>
+              )}
               
               <button 
-                onClick={handleRecovery}
-                className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
-              >
-                ভেরিফিকেশন কোড পাঠান
-              </button>
-              
-              <button 
-                onClick={() => setShowForgot(null)}
+                onClick={() => {
+                  setShowForgot(null);
+                  setRecoveryStep('send');
+                  setError('');
+                }}
                 className="block w-full text-slate-400 text-sm font-medium"
               >
                 বাতিল
