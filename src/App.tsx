@@ -22,7 +22,8 @@ import {
   Eye,
   X,
   Pencil,
-  Check
+  Check,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
@@ -95,6 +96,37 @@ const App: React.FC = () => {
     }
   }, [showForgot]);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (showPreview && showPreview.type.includes('pdf')) {
+      try {
+        const base64Parts = showPreview.dataUrl.split(',');
+        if (base64Parts.length < 2) return;
+        
+        const base64Data = base64Parts[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        setPdfUrl(url);
+
+        return () => {
+          URL.revokeObjectURL(url);
+          setPdfUrl(null);
+        };
+      } catch (err) {
+        console.error("PDF Blob conversion error:", err);
+      }
+    } else {
+      setPdfUrl(null);
+    }
+  }, [showPreview]);
+
   const [showLockFolder, setShowLockFolder] = useState<Folder | null>(null);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editingFileName, setEditingFileName] = useState('');
@@ -1283,17 +1315,28 @@ const App: React.FC = () => {
                         <div 
                           className={cn(
                             "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all",
-                            file.type.includes('image') && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
+                            (file.type.includes('image') || file.type.includes('pdf')) && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
                           )}
-                          onClick={() => file.type.includes('image') && handlePreview(file)}
+                          onClick={() => (file.type.includes('image') || file.type.includes('pdf')) && handlePreview(file)}
                         >
                           {file.type.includes('image') ? (
                             <ImageIcon className="w-6 h-6 text-indigo-500" />
+                          ) : file.type.includes('pdf') ? (
+                            <FileText className="w-6 h-6 text-rose-500" />
                           ) : (
                             <FileIcon className="w-6 h-6 text-slate-400" />
                           )}
                         </div>
                         <div className="flex items-center gap-1">
+                          {(file.type.includes('image') || file.type.includes('pdf')) && (
+                            <button 
+                              onClick={() => handlePreview(file)}
+                              className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                              title="প্রিভিউ দেখুন"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
                           <button 
                             onClick={() => {
                               setEditingFileId(file.id);
@@ -1748,13 +1791,26 @@ const App: React.FC = () => {
                 <X className="w-6 h-6" />
               </button>
               
-              <div className="bg-white p-2 rounded-3xl shadow-2xl overflow-hidden flex items-center justify-center">
-                <img 
-                  src={showPreview.dataUrl} 
-                  alt={showPreview.name} 
-                  className="max-w-full max-h-[70vh] object-contain rounded-2xl"
-                  referrerPolicy="no-referrer"
-                />
+              <div className="bg-white p-2 rounded-3xl shadow-2xl overflow-hidden flex items-center justify-center w-full min-h-[50vh]">
+                {showPreview.type.includes('image') ? (
+                  <img 
+                    src={showPreview.dataUrl} 
+                    alt={showPreview.name} 
+                    className="max-w-full max-h-[70vh] object-contain rounded-2xl"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : showPreview.type.includes('pdf') ? (
+                  <iframe 
+                    src={pdfUrl || showPreview.dataUrl} 
+                    title={showPreview.name}
+                    className="w-full h-[70vh] rounded-2xl border-none"
+                  />
+                ) : (
+                  <div className="p-10 text-center">
+                    <FileIcon className="w-20 h-20 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-500">এই ফাইলটির প্রিভিউ দেখা সম্ভব নয়।</p>
+                  </div>
+                )}
               </div>
               
               <div className="mt-6 text-center">
