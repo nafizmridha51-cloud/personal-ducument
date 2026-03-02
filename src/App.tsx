@@ -217,7 +217,17 @@ const App: React.FC = () => {
       const filesQuery = query(collection(db, 'files'), where('userId', '==', user.uid));
       unsubscribeFiles = onSnapshot(filesQuery, (snapshot) => {
         const fileList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FileData));
-        setFiles(fileList);
+        
+        // Preserve locally loaded dataUrl if it's not 'CHUNKED'
+        setFiles(prev => {
+          return fileList.map(newFile => {
+            const existingFile = prev.find(f => f.id === newFile.id);
+            if (existingFile && existingFile.dataUrl !== 'CHUNKED' && newFile.dataUrl === 'CHUNKED') {
+              return { ...newFile, dataUrl: existingFile.dataUrl };
+            }
+            return newFile;
+          });
+        });
       });
     } catch (err) {
       console.error(err);
@@ -678,12 +688,17 @@ const App: React.FC = () => {
         setEditingFileId(null);
         return;
       }
+      
+      // Optimistically update local state to keep dataUrl if it was already loaded
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, name: newName } : f));
+      
       const db = getFirebaseDb();
       await updateDoc(doc(db, 'files', id), { name: newName });
       setEditingFileId(null);
     } catch (err) {
       console.error(err);
       alert('নাম পরিবর্তন করতে সমস্যা হয়েছে।');
+      // Revert local state on error if needed, but onSnapshot will eventually sync anyway
     }
   };
 
@@ -955,11 +970,27 @@ const App: React.FC = () => {
         const blob = dataUrlToBlob(dataUrl);
         if (!blob) throw new Error("Blob conversion failed");
         
-        const shareFile = new File([blob], file.name, { type: file.type });
+        // Ensure filename has an extension that matches the type
+        // This is critical for navigator.share on many mobile browsers
+        let fileName = file.name;
+        const extensionMap: Record<string, string> = {
+          'image/jpeg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'application/pdf': '.pdf',
+          'text/plain': '.txt',
+        };
+
+        const hasExtension = fileName.includes('.');
+        if (!hasExtension && extensionMap[file.type]) {
+          fileName += extensionMap[file.type];
+        }
+        
+        const shareFile = new File([blob], fileName, { type: file.type });
         const shareData: ShareData = {
           files: [shareFile],
-          title: file.name,
-          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+          title: fileName,
+          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${fileName}`,
         };
 
         if (navigator.canShare && navigator.canShare(shareData)) {
