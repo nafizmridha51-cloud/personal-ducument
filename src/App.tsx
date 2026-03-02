@@ -1408,19 +1408,10 @@ const App: React.FC = () => {
                         <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">{file.size} • {file.uploadDate}</p>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        {file.type.includes('image') && (
-                          <button 
-                            onClick={() => handlePreview(file)}
-                            className="flex-1 bg-indigo-50 text-indigo-600 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            প্রিভিউ
-                          </button>
-                        )}
+                      <div className="mt-auto pt-2">
                         <button 
                           onClick={() => downloadFile(file)}
-                          className="flex-1 bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
+                          className="w-full bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
                         >
                           <Download className="w-3.5 h-3.5" />
                           ডাউনলোড
