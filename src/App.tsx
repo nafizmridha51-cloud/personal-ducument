@@ -27,11 +27,22 @@ import {
   Share2,
   Loader2,
   Camera,
-  User as UserIcon
+  User as UserIcon,
+  ExternalLink,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
+import { 
+  getFirebaseAuth, 
+  loginWithGoogle, 
+  logout, 
+  getFirebaseDb, 
+  isFirebaseConfigured,
+  getSecondaryAuthAndDb,
+  closeSecondaryApp
+} from './lib/firebase';
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
+import { FirebaseApp } from 'firebase/app';
 import { 
   collection, 
   addDoc, 
@@ -45,12 +56,14 @@ import {
   serverTimestamp,
   getDocs,
   orderBy,
-  writeBatch
+  writeBatch,
+  Firestore,
+  getDoc
 } from 'firebase/firestore';
 import { User, Folder, FileData } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Settings, ExternalLink, Info } from 'lucide-react';
+import { Settings, Info } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -70,6 +83,7 @@ const App: React.FC = () => {
   }, [authUser, customProfile]);
 
   const [loading, setLoading] = useState(true);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>(() => {
     const saved = localStorage.getItem('demo_folders');
     return saved ? JSON.parse(saved) : [];
@@ -151,6 +165,25 @@ const App: React.FC = () => {
   const [editingFolderName, setEditingFolderName] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [showRemoteLogin, setShowRemoteLogin] = useState(false);
+  const [showRemoteSettings, setShowRemoteSettings] = useState(false);
+  const [remoteEmail, setRemoteEmail] = useState('');
+  const [remotePassword, setRemotePassword] = useState('');
+  const [remoteAccessKeyInput, setRemoteAccessKeyInput] = useState('');
+  const [remoteAccessKey, setRemoteAccessKey] = useState('');
+  const [isRemoteLoggingIn, setIsRemoteLoggingIn] = useState(false);
+  const [isSavingRemoteKey, setIsSavingRemoteKey] = useState(false);
+  const [remoteAccess, setRemoteAccess] = useState<{
+    isActive: boolean;
+    user: User | null;
+    db: Firestore | null;
+    app: FirebaseApp | null;
+  }>({
+    isActive: false,
+    user: null,
+    db: null,
+    app: null
+  });
   const [newDisplayName, setNewDisplayName] = useState('');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   
@@ -228,10 +261,16 @@ const App: React.FC = () => {
     const docRef = doc(db, 'userProfiles', authUser.uid);
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
-        setCustomProfile(docSnap.data());
+        const data = docSnap.data();
+        setCustomProfile(data);
+        if (data.remoteAccessKey) {
+          setRemoteAccessKey(data.remoteAccessKey);
+        }
       }
+      setPermissionError(null);
     }, (error) => {
       if (error.code === 'permission-denied') {
+        setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
         console.warn("Firestore permissions not set for userProfiles. Please update rules in Firebase Console.");
       } else {
         console.error("Firestore Profile Error:", error);
@@ -249,18 +288,26 @@ const App: React.FC = () => {
 
     try {
       if (!isFirebaseConfigured) return;
-      const db = getFirebaseDb();
-      const foldersQuery = query(collection(db, 'folders'), where('userId', '==', user.uid));
+      
+      const currentDb = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
+
+      const foldersQuery = query(collection(currentDb, 'folders'), where('userId', '==', currentUserId));
       unsubscribeFolders = onSnapshot(foldersQuery, (snapshot) => {
         const folderList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Folder));
         setFolders(folderList.sort((a, b) => b.createdAt - a.createdAt));
+        setPermissionError(null);
       }, (error) => {
+        if (error.code === 'permission-denied') {
+          setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
+        }
         console.error("Folders Snapshot Error:", error);
       });
 
-      const filesQuery = query(collection(db, 'files'), where('userId', '==', user.uid));
+      const filesQuery = query(collection(currentDb, 'files'), where('userId', '==', currentUserId));
       unsubscribeFiles = onSnapshot(filesQuery, (snapshot) => {
         const fileList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FileData));
+        setPermissionError(null);
         
         // Preserve locally loaded dataUrl if it's not 'CHUNKED'
         setFiles(prev => {
@@ -273,6 +320,9 @@ const App: React.FC = () => {
           });
         });
       }, (error) => {
+        if (error.code === 'permission-denied') {
+          setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
+        }
         console.error("Files Snapshot Error:", error);
       });
     } catch (err) {
@@ -283,7 +333,7 @@ const App: React.FC = () => {
       unsubscribeFolders?.();
       unsubscribeFiles?.();
     };
-  }, [user, isDemoMode]);
+  }, [user, isDemoMode, remoteAccess.isActive, remoteAccess.user?.uid, remoteAccess.db]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -308,6 +358,83 @@ const App: React.FC = () => {
     } finally {
       setIsUpdatingProfile(false);
     }
+  };
+
+  const handleRemoteLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsRemoteLoggingIn(true);
+    try {
+      const result = await getSecondaryAuthAndDb(remoteEmail, remotePassword);
+      
+      // Fetch remote user's profile to check remoteAccessKey
+      const profileDoc = await getDoc(doc(result.db, 'userProfiles', result.user.uid));
+      const profileData = profileDoc.data();
+      
+      if (profileData && profileData.remoteAccessKey) {
+        if (profileData.remoteAccessKey !== remoteAccessKeyInput) {
+          throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
+        }
+      }
+
+      setRemoteAccess({
+        isActive: true,
+        user: {
+          uid: result.user.uid,
+          email: result.user.email || '',
+          displayName: result.user.displayName || 'Remote User',
+          photoURL: result.user.photoURL || ''
+        },
+        db: result.db,
+        app: result.app
+      });
+      setShowRemoteLogin(false);
+      setRemoteEmail('');
+      setRemotePassword('');
+      setRemoteAccessKeyInput('');
+      setActiveFolderId(null);
+    } catch (err: any) {
+      if (err.message === 'রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।') {
+        setError(err.message);
+      } else {
+        setError('রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে। ইমেইল বা পাসওয়ার্ড ভুল হতে পারে।');
+      }
+      console.error(err);
+    } finally {
+      setIsRemoteLoggingIn(false);
+    }
+  };
+
+  const handleSaveRemoteKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !remoteAccessKey.trim()) return;
+    setIsSavingRemoteKey(true);
+    try {
+      const db = getFirebaseDb();
+      await setDoc(doc(db, 'userProfiles', user.uid), { 
+        remoteAccessKey: remoteAccessKey 
+      }, { merge: true });
+      setShowRemoteSettings(false);
+      alert('রিমোট অ্যাক্সেস পাসওয়ার্ড সফলভাবে সেট করা হয়েছে।');
+    } catch (err) {
+      console.error(err);
+      alert('পাসওয়ার্ড সেট করতে সমস্যা হয়েছে।');
+    } finally {
+      setIsSavingRemoteKey(false);
+    }
+  };
+
+  const handleExitRemoteAccess = async () => {
+    if (remoteAccess.app) {
+      await closeSecondaryApp(remoteAccess.app);
+    }
+    setRemoteAccess({
+      isActive: false,
+      user: null,
+      db: null,
+      app: null
+    });
+    setActiveFolderId(null);
   };
 
   const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1269,7 +1396,212 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#f8fafc]">
+    <div className="min-h-screen flex flex-col bg-[#f8fafc]">
+      {/* Remote Access Modal */}
+      <AnimatePresence>
+        {showRemoteLogin && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+            >
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-4">
+                  <ExternalLink className="w-8 h-8 text-indigo-600" />
+                </div>
+                <h3 className="text-2xl font-bold text-slate-900">রিমোট ভল্ট অ্যাক্সেস</h3>
+                <p className="text-slate-500 mt-2">অন্য ডিভাইসের ডকুমেন্ট অ্যাক্সেস করতে জিমেইল আইডি ও পাসওয়ার্ড দিন।</p>
+              </div>
+
+              <form onSubmit={handleRemoteLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">জিমেইল আইডি</label>
+                  <div className="relative">
+                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="example@gmail.com"
+                      value={remoteEmail}
+                      onChange={(e) => setRemoteEmail(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">পাসওয়ার্ড</label>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="password" 
+                      required
+                      placeholder="••••••••"
+                      value={remotePassword}
+                      onChange={(e) => setRemotePassword(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড (ঐচ্ছিক)</label>
+                  <div className="relative">
+                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="password" 
+                      placeholder="যদি সেট করা থাকে"
+                      value={remoteAccessKeyInput}
+                      onChange={(e) => setRemoteAccessKeyInput(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <p>{error}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <button 
+                    type="button"
+                    onClick={() => alert('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুলে গেলে ভল্টের মালিকের সাথে যোগাযোগ করুন। মালিক তার প্রোফাইল সেটিংস থেকে এটি রিসেট করতে পারবেন।')}
+                    className="text-xs text-indigo-600 font-bold hover:underline"
+                  >
+                    পাসওয়ার্ড ভুলে গেছেন?
+                  </button>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isRemoteLoggingIn}
+                  className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+                >
+                  {isRemoteLoggingIn ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      অ্যাক্সেস করা হচ্ছে...
+                    </>
+                  ) : (
+                    'অ্যাক্সেস করুন'
+                  )}
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowRemoteLogin(false);
+                    setError('');
+                    setRemoteEmail('');
+                    setRemotePassword('');
+                  }}
+                  className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
+                >
+                  বাতিল
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Remote Settings Modal */}
+      <AnimatePresence>
+        {showRemoteSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+            >
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-4">
+                  <ShieldCheck className="w-8 h-8 text-indigo-600" />
+                </div>
+                <h3 className="text-2xl font-bold text-slate-900">রিমোট অ্যাক্সেস সেটিংস</h3>
+                <p className="text-slate-500 mt-2">অন্য কেউ আপনার ভল্ট অ্যাক্সেস করতে চাইলে এই পাসওয়ার্ডটি প্রয়োজন হবে।</p>
+              </div>
+
+              <form onSubmit={handleSaveRemoteKey} className="space-y-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="password" 
+                      required
+                      placeholder="নতুন পাসওয়ার্ড দিন"
+                      value={remoteAccessKey}
+                      onChange={(e) => setRemoteAccessKey(e.target.value)}
+                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 bg-indigo-50 rounded-2xl">
+                  <p className="text-[11px] text-indigo-600 leading-relaxed">
+                    <span className="font-bold">সুরক্ষা টিপস:</span> এই পাসওয়ার্ডটি আপনার জিমেইল পাসওয়ার্ড থেকে আলাদা হওয়া উচিত। এটি শুধুমাত্র রিমোট অ্যাক্সেসের জন্য ব্যবহৃত হবে।
+                  </p>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isSavingRemoteKey}
+                  className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+                >
+                  {isSavingRemoteKey ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      সেভ করা হচ্ছে...
+                    </>
+                  ) : (
+                    'পাসওয়ার্ড সেভ করুন'
+                  )}
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setShowRemoteSettings(false)}
+                  className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
+                >
+                  বাতিল
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Permission Error Banner */}
+      <AnimatePresence>
+        {permissionError && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-red-600 text-white text-center py-2 text-sm font-medium sticky top-0 z-[100] overflow-hidden"
+          >
+            <div className="max-w-4xl mx-auto px-4 flex items-center justify-center gap-2">
+              <AlertCircle size={16} />
+              <span>{permissionError}</span>
+              <button 
+                onClick={() => setPermissionError(null)}
+                className="ml-4 underline hover:no-underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar */}
       <aside className="w-full md:w-80 bg-slate-900 text-white p-6 flex flex-col border-r border-slate-800">
           <div className="flex items-center justify-between mb-10 relative">
@@ -1319,6 +1651,28 @@ const App: React.FC = () => {
                     ছবি পরিবর্তন করুন
                   </button>
 
+                  <button 
+                    onClick={() => {
+                      setShowRemoteLogin(true);
+                      setShowUserMenu(false);
+                    }} 
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    রিমোট ভল্ট অ্যাক্সেস
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setShowRemoteSettings(true);
+                      setShowUserMenu(false);
+                    }} 
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    রিমোট অ্যাক্সেস সেটিংস
+                  </button>
+
                   <div className="h-px bg-slate-700/50 my-1" />
 
                   <button 
@@ -1349,6 +1703,24 @@ const App: React.FC = () => {
               )}
             </div>
           </div>
+
+        {remoteAccess.isActive && (
+          <div className="mb-6 bg-indigo-600/20 border border-indigo-500/30 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">রিমোট ভল্ট</span>
+              </div>
+              <button 
+                onClick={handleExitRemoteAccess}
+                className="text-[10px] bg-indigo-500 hover:bg-indigo-400 px-2 py-0.5 rounded transition-colors"
+              >
+                বন্ধ করুন
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 truncate font-medium">{remoteAccess.user?.email}</p>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           <div>
@@ -1735,6 +2107,7 @@ const App: React.FC = () => {
           )}
         </div>
       </main>
+    </div>
 
       <input 
         type="file" 

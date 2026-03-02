@@ -1,9 +1,9 @@
 
 import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth } from "firebase/auth";
-import { initializeFirestore, Firestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth, signInWithEmailAndPassword, deleteUser } from "firebase/auth";
+import { initializeFirestore, Firestore, terminate } from "firebase/firestore";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -70,5 +70,33 @@ export const logout = async () => {
   } catch (error) {
     console.error("Error signing out", error);
     throw error;
+  }
+};
+
+export const getSecondaryAuthAndDb = async (email: string, pass: string) => {
+  try {
+    const secondaryAppName = `SecondaryApp_${Date.now()}`;
+    const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+    const secondaryAuth = getAuth(secondaryApp);
+    const secondaryDb = initializeFirestore(secondaryApp, {
+      experimentalForceLongPolling: true,
+    });
+    
+    const result = await signInWithEmailAndPassword(secondaryAuth, email, pass);
+    return { auth: secondaryAuth, db: secondaryDb, user: result.user, app: secondaryApp };
+  } catch (error) {
+    console.error("Error in secondary auth", error);
+    throw error;
+  }
+};
+
+export const closeSecondaryApp = async (app: FirebaseApp) => {
+  try {
+    const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+    await terminate(db);
+    const auth = getAuth(app);
+    await signOut(auth);
+  } catch (error) {
+    console.error("Error closing secondary app", error);
   }
 };
