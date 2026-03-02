@@ -395,7 +395,7 @@ const App: React.FC = () => {
     }
   };
   const handleRecovery = async () => {
-    if (!showForgot || !user) return;
+    if (!showForgot || !user || !user.email) return;
     
     setIsSendingCode(true);
     setError('');
@@ -404,13 +404,34 @@ const App: React.FC = () => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedCode(code);
 
-    // In a real app, you'd call a backend to send an email here.
-    // For this demo, we'll simulate the delay and show the code in an alert.
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/send-verification-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, code }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setIsSendingCode(false);
+        setRecoveryStep('verify');
+        if (data.simulated) {
+          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(SMTP কনফিগার করা নেই, তাই ইমেইল পাঠানো সম্ভব হয়নি)`);
+        } else {
+          alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে।`);
+        }
+      } else {
+        throw new Error(data.error || 'Failed to send email');
+      }
+    } catch (err) {
+      console.error('Error sending recovery email:', err);
       setIsSendingCode(false);
+      setError('ইমেইল পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে পরে চেষ্টা করুন।');
+      // Fallback to simulation for testing if API fails
       setRecoveryStep('verify');
-      alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(বাস্তব অ্যাপে এটি আপনার ইমেইলে পাঠানো হতো)`);
-    }, 1500);
+      alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(সার্ভার ত্রুটি, তাই সিমুলেশন মোডে দেখানো হচ্ছে)`);
+    }
   };
 
   const handleVerifyCode = () => {
