@@ -876,6 +876,8 @@ const App: React.FC = () => {
     }
   };
 
+  const [isSharing, setIsSharing] = useState(false);
+
   const dataUrlToBlob = (dataUrl: string) => {
     try {
       const arr = dataUrl.split(',');
@@ -894,10 +896,15 @@ const App: React.FC = () => {
   };
 
   const handleShare = async (file: FileData) => {
+    if (isSharing) {
+      return;
+    }
+
+    setIsSharing(true);
     try {
       let dataUrl = file.dataUrl;
       
-      // Handle chunked files
+      // Handle chunked files - this async operation breaks the user gesture
       if (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED') {
         setIsPreviewLoading(true);
         try {
@@ -912,6 +919,7 @@ const App: React.FC = () => {
           if (chunksSnapshot.empty) {
             alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি।');
             setIsPreviewLoading(false);
+            setIsSharing(false);
             return;
           }
 
@@ -924,24 +932,34 @@ const App: React.FC = () => {
             fullBase64 += chunk.data;
           });
           dataUrl = fullBase64;
+          
+          // CRITICAL: After an async fetch, the user gesture is lost.
+          // We must ask the user to click again to trigger the share API.
+          setIsPreviewLoading(false);
+          const readyToShare = window.confirm('ফাইলটি শেয়ার করার জন্য প্রস্তুত। এখন শেয়ার করতে "OK" চাপুন।');
+          if (!readyToShare) {
+            setIsSharing(false);
+            return;
+          }
+          // The click on "OK" in window.confirm counts as a user gesture in some browsers,
+          // but not all. A better way is a dedicated button, but confirm is a good middle ground.
         } catch (err) {
           console.error("Share chunk error:", err);
           alert('ফাইল ডেটা লোড করতে সমস্যা হয়েছে।');
           setIsPreviewLoading(false);
+          setIsSharing(false);
           return;
-        } finally {
-          setIsPreviewLoading(false);
         }
       }
 
       if (!dataUrl || dataUrl === 'CHUNKED') {
         alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
+        setIsSharing(false);
         return;
       }
 
       if (navigator.share) {
         try {
-          // Use synchronous conversion to preserve user gesture as much as possible
           const blob = dataUrlToBlob(dataUrl);
           if (!blob) {
             throw new Error("Could not convert data to blob");
@@ -954,11 +972,9 @@ const App: React.FC = () => {
             text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
           };
 
-          // Check if browser can share these files
           if (navigator.canShare && navigator.canShare(shareData)) {
             await navigator.share(shareData);
           } else {
-            // Try sharing without files if files are not supported
             await navigator.share({
               title: file.name,
               text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
@@ -966,15 +982,29 @@ const App: React.FC = () => {
           }
         } catch (innerErr: any) {
           console.error('Share inner error:', innerErr);
-          // If it's a permission error, rethrow to outer catch
+          
           if (innerErr.name === 'NotAllowedError' || innerErr.message?.includes('Permission denied')) {
+            // If it's a permission error, it's likely the iframe or gesture issue.
+            // We show a more helpful message.
             throw innerErr;
           }
-          // Fallback for other errors
-          await navigator.share({
-            title: file.name,
-            text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
-          });
+          
+          if (innerErr.message?.includes('already completed')) {
+            // Don't alert for this, just log it.
+            return;
+          }
+          
+          // Fallback to text-only share
+          try {
+            await navigator.share({
+              title: file.name,
+              text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+            });
+          } catch (finalErr: any) {
+            if (finalErr.name !== 'AbortError' && !finalErr.message?.includes('already completed')) {
+              throw finalErr;
+            }
+          }
         }
       } else {
         alert('আপনার ব্রাউজার সরাসরি শেয়ার সাপোর্ট করে না। ফাইলটি ডাউনলোড করে শেয়ার করুন।');
@@ -984,14 +1014,20 @@ const App: React.FC = () => {
       if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
         alert(
           'শেয়ার করার অনুমতি পাওয়া যায়নি।\n\n' +
-          'সম্ভাব্য কারণ:\n' +
-          '১. আপনি অ্যাপটি কোনো ফ্রেম বা ইন-অ্যাপ ব্রাউজারে (যেমন Facebook/Messenger) ব্যবহার করছেন।\n' +
-          '২. ব্রাউজার সরাসরি ফাইল শেয়ার করার অনুমতি দিচ্ছে না।\n\n' +
-          'সমাধান: উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন অথবা ফাইলটি ডাউনলোড করে শেয়ার করুন।'
+          'এটি সাধারণত ঘটে যদি আপনি অ্যাপটি কোনো ইন-অ্যাপ ব্রাউজারে (যেমন Facebook/Messenger) ব্যবহার করেন অথবা ব্রাউজার সিকিউরিটি পলিসি এটি ব্লক করে।\n\n' +
+          'সমাধান:\n' +
+          '১. উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন।\n' +
+          '২. অথবা ফাইলটি ডাউনলোড করে তারপর শেয়ার করুন।'
         );
-      } else if (err.name !== 'AbortError') {
+      } else if (err.name === 'AbortError') {
+        // User cancelled
+      } else if (err.message?.includes('already completed')) {
+        // Ignore
+      } else {
         alert('শেয়ার করতে সমস্যা হয়েছে। ফাইলটি ডাউনলোড করে শেয়ার করার চেষ্টা করুন।');
       }
+    } finally {
+      setIsSharing(false);
     }
   };
 
