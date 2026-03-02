@@ -113,6 +113,33 @@ async function startServer() {
     });
   });
 
+  app.post("/api/test-connection", async (req, res) => {
+    const user = process.env.EMAIL_USER;
+    const pass = process.env.EMAIL_PASS;
+
+    if (!user || !pass) {
+      return res.status(400).json({ error: "Environment variables missing" });
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true,
+        auth: {
+          user: user,
+          pass: pass.replace(/\s/g, ""),
+        },
+        connectionTimeout: 5000,
+      });
+
+      await transporter.verify();
+      res.json({ success: true, message: "SMTP Connection Successful!" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

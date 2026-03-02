@@ -83,6 +83,7 @@ const App: React.FC = () => {
   const [userInputCode, setUserInputCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [configStatus, setConfigStatus] = useState<{ emailConfigured: boolean; user: string | null } | null>(null);
 
   useEffect(() => {
@@ -404,6 +405,27 @@ const App: React.FC = () => {
       alert('ডেমো ডেটা সফলভাবে মুছে ফেলা হয়েছে।');
     }
   };
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    try {
+      const res = await fetch('/api/test-connection', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert("অভিনন্দন! আপনার ইমেইল সার্ভার সঠিকভাবে কনফিগার করা হয়েছে। এখন ইমেইল যাবে।");
+        // Refresh status
+        const statusRes = await fetch('/api/config-status');
+        const statusData = await statusRes.json();
+        setConfigStatus(statusData);
+      } else {
+        alert(`ত্রুটি: ${data.error}\n\nপরামর্শ: আপনার App Password সঠিক কি না তা আবার চেক করুন।`);
+      }
+    } catch (err: any) {
+      alert("সার্ভারের সাথে কানেক্ট করা যাচ্ছে না।");
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
   const handleRecovery = async () => {
     if (!showForgot || !user || !user.email) return;
     
@@ -1567,12 +1589,30 @@ const App: React.FC = () => {
                   </div>
 
                   {configStatus && (
-                    <div className={`mb-6 p-3 rounded-xl text-xs flex items-center gap-2 ${configStatus.emailConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                      <div className={`w-2 h-2 rounded-full ${configStatus.emailConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                      {configStatus.emailConfigured ? (
-                        <span>ইমেইল সার্ভার প্রস্তুত ({configStatus.user})</span>
-                      ) : (
-                        <span>ইমেইল সার্ভার কনফিগার করা নেই (সিমুলেশন মোড)</span>
+                    <div className="mb-6">
+                      <div className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 ${configStatus.emailConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${configStatus.emailConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                          {configStatus.emailConfigured ? (
+                            <span>ইমেইল সার্ভার প্রস্তুত ({configStatus.user})</span>
+                          ) : (
+                            <span>ইমেইল সার্ভার কনফিগার করা নেই</span>
+                          )}
+                        </div>
+                        
+                        <button 
+                          onClick={handleTestConnection}
+                          disabled={isTestingConnection}
+                          className="px-2 py-1 bg-white/50 hover:bg-white rounded-lg border border-current font-bold transition-all disabled:opacity-50"
+                        >
+                          {isTestingConnection ? 'চেক হচ্ছে...' : 'টেস্ট করুন'}
+                        </button>
+                      </div>
+                      
+                      {!configStatus.emailConfigured && (
+                        <p className="mt-2 text-[10px] text-rose-500 font-medium text-left">
+                          * আপনি যদি আসল ইমেইল পেতে চান, তবে AI Studio-র সেটিংসে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করে সার্ভার রিস্টার্ট দিন।
+                        </p>
                       )}
                     </div>
                   )}
