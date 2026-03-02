@@ -36,38 +36,54 @@ async function startServer() {
 
     try {
       const transporter = nodemailer.createTransport({
-        service: "gmail",
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true, // use SSL
         auth: {
           user: user,
-          pass: pass,
+          pass: pass.replace(/\s/g, ""), // Remove any spaces from the App Password
         },
       });
+
+      // Verify connection configuration
+      await transporter.verify();
 
       const mailOptions = {
         from: `"Secure Doc Vault" <${user}>`,
         to: email,
         subject: "পাসওয়ার্ড রিকভারি ভেরিফিকেশন কোড",
         html: `
-          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px;">
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
             <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="color: #4f46e5; margin: 0;">সুরক্ষিত নথি ভল্ট</h1>
+              <h1 style="color: #4f46e5; margin: 0; font-size: 24px;">সুরক্ষিত নথি ভল্ট</h1>
+              <p style="color: #64748b; font-size: 14px;">আপনার ডিজিটাল নিরাপত্তার বিশ্বস্ত সঙ্গী</p>
             </div>
-            <p style="font-size: 16px; color: #475569;">আপনার ফোল্ডার পাসওয়ার্ড রিসেট করার জন্য নিচের ভেরিফিকেশন কোডটি ব্যবহার করুন:</p>
-            <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-radius: 12px; margin: 30px 0;">
-              <span style="font-size: 32px; font-weight: bold; letter-spacing: 10px; color: #1e293b;">${code}</span>
+            <div style="padding: 20px; border-radius: 12px; background-color: #f8fafc;">
+              <p style="font-size: 16px; color: #1e293b; margin-top: 0;">হ্যালো,</p>
+              <p style="font-size: 16px; color: #475569; line-height: 1.6;">আপনার ফোল্ডার পাসওয়ার্ড রিসেট করার জন্য একটি অনুরোধ পাওয়া গেছে। আপনার ভেরিফিকেশন কোডটি নিচে দেওয়া হলো:</p>
+              <div style="background-color: #ffffff; padding: 20px; text-align: center; border-radius: 12px; margin: 25px 0; border: 2px dashed #cbd5e1;">
+                <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #4f46e5; font-family: monospace;">${code}</span>
+              </div>
+              <p style="font-size: 14px; color: #64748b; line-height: 1.5;">এই কোডটি পরবর্তী <b>১০ মিনিটের</b> জন্য কার্যকর থাকবে। আপনি যদি এই অনুরোধটি না করে থাকেন, তবে অনুগ্রহ করে এই ইমেইলটি উপেক্ষা করুন এবং আপনার অ্যাকাউন্টের নিরাপত্তা নিশ্চিত করুন।</p>
             </div>
-            <p style="font-size: 14px; color: #64748b; line-height: 1.5;">এই কোডটি পরবর্তী ১০ মিনিটের জন্য কার্যকর থাকবে। আপনি যদি এই অনুরোধটি না করে থাকেন, তবে অনুগ্রহ করে এই ইমেইলটি উপেক্ষা করুন।</p>
-            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
-            <p style="font-size: 12px; color: #94a3b8; text-align: center;">© ${new Date().getFullYear()} সুরক্ষিত নথি ভল্ট। সকল অধিকার সংরক্ষিত।</p>
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center;">
+              <p style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">এটি একটি স্বয়ংক্রিয় ইমেইল, দয়া করে এখানে রিপ্লাই দেবেন না।</p>
+              <p style="font-size: 12px; color: #94a3b8;">© ${new Date().getFullYear()} সুরক্ষিত নথি ভল্ট। সকল অধিকার সংরক্ষিত।</p>
+            </div>
           </div>
         `,
       };
 
-      await transporter.sendMail(mailOptions);
+      const info = await transporter.sendMail(mailOptions);
+      console.log("Email sent successfully:", info.messageId);
       res.json({ success: true, message: "Email sent successfully" });
-    } catch (error) {
-      console.error("Error sending email:", error);
-      res.status(500).json({ error: "Failed to send email" });
+    } catch (error: any) {
+      console.error("SMTP Error Details:", error);
+      res.status(500).json({ 
+        error: "Failed to send email", 
+        details: error.message,
+        code: error.code 
+      });
     }
   });
 

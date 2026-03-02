@@ -417,20 +417,34 @@ const App: React.FC = () => {
         setIsSendingCode(false);
         setRecoveryStep('verify');
         if (data.simulated) {
-          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(SMTP কনফিগার করা নেই, তাই ইমেইল পাঠানো সম্ভব হয়নি)`);
+          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n\n(SMTP কনফিগার করা নেই। আপনি যদি আসল ইমেইল পেতে চান, তবে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করুন)`);
         } else {
-          alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে।`);
+          alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে। অনুগ্রহ করে স্প্যাম (Spam) ফোল্ডারটিও চেক করুন।`);
         }
       } else {
-        throw new Error(data.error || 'Failed to send email');
+        throw new Error(data.details || data.error || 'Failed to send email');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error sending recovery email:', err);
       setIsSendingCode(false);
-      setError('ইমেইল পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে পরে চেষ্টা করুন।');
-      // Fallback to simulation for testing if API fails
-      setRecoveryStep('verify');
-      alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n(সার্ভার ত্রুটি, তাই সিমুলেশন মোডে দেখানো হচ্ছে)`);
+      
+      let errorMessage = 'ইমেইল পাঠাতে সমস্যা হয়েছে।';
+      if (err.message.includes('Invalid login')) {
+        errorMessage = 'আপনার EMAIL_PASS (App Password) সঠিক নয়। অনুগ্রহ করে গুগল থেকে নতুন কোড নিয়ে সেট করুন।';
+      } else if (err.message.includes('ETIMEDOUT')) {
+        errorMessage = 'সার্ভার কানেকশন টাইমআউট হয়েছে। আবার চেষ্টা করুন।';
+      }
+      
+      setError(errorMessage);
+      
+      // Fallback to simulation for testing if API fails or in demo mode
+      if (isDemoMode) {
+        setRecoveryStep('verify');
+        alert(`ডেমো মোডে আছেন, তাই ইমেইল পাঠানো হয়নি।\nআপনার ভেরিফিকেশন কোডটি হলো: ${code}`);
+      } else {
+        alert(`ত্রুটি: ${err.message}\n\nসিস্টেমটি এখন সিমুলেশন মোডে কোডটি দেখাচ্ছে: ${code}`);
+        setRecoveryStep('verify');
+      }
     }
   };
 
