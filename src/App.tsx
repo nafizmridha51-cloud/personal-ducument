@@ -83,6 +83,16 @@ const App: React.FC = () => {
   const [userInputCode, setUserInputCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
+  const [configStatus, setConfigStatus] = useState<{ emailConfigured: boolean; user: string | null } | null>(null);
+
+  useEffect(() => {
+    if (showForgot) {
+      fetch('/api/config-status')
+        .then(res => res.json())
+        .then(data => setConfigStatus(data))
+        .catch(err => console.error('Error fetching config status:', err));
+    }
+  }, [showForgot]);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
   const [showLockFolder, setShowLockFolder] = useState<Folder | null>(null);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
@@ -417,7 +427,7 @@ const App: React.FC = () => {
         setIsSendingCode(false);
         setRecoveryStep('verify');
         if (data.simulated) {
-          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n\n(SMTP কনফিগার করা নেই। আপনি যদি আসল ইমেইল পেতে চান, তবে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করুন)`);
+          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n\n(সার্ভার ত্রুটি: SMTP কনফিগার করা নেই। আপনি যদি আসল ইমেইল পেতে চান, তবে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করুন)`);
         } else {
           alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে। অনুগ্রহ করে স্প্যাম (Spam) ফোল্ডারটিও চেক করুন।`);
         }
@@ -1555,6 +1565,17 @@ const App: React.FC = () => {
                     <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">আপনার ইমেইল</p>
                     <p className="text-sm font-bold text-slate-700">{user.email}</p>
                   </div>
+
+                  {configStatus && (
+                    <div className={`mb-6 p-3 rounded-xl text-xs flex items-center gap-2 ${configStatus.emailConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                      <div className={`w-2 h-2 rounded-full ${configStatus.emailConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                      {configStatus.emailConfigured ? (
+                        <span>ইমেইল সার্ভার প্রস্তুত ({configStatus.user})</span>
+                      ) : (
+                        <span>ইমেইল সার্ভার কনফিগার করা নেই (সিমুলেশন মোড)</span>
+                      )}
+                    </div>
+                  )}
                   
                   <button 
                     onClick={handleRecovery}

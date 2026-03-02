@@ -25,28 +25,47 @@ async function startServer() {
     const user = process.env.EMAIL_USER;
     const pass = process.env.EMAIL_PASS;
 
+    console.log("Checking SMTP Config:", { 
+      hasUser: !!user, 
+      hasPass: !!pass,
+      userValue: user ? "Set" : "Missing"
+    });
+
     if (!user || !pass) {
-      console.warn("SMTP credentials missing. Falling back to simulation mode.");
       return res.status(200).json({ 
         success: true, 
         simulated: true,
-        message: "SMTP credentials not configured. Code was generated but not sent via real email." 
+        message: "SMTP credentials not configured in environment variables." 
       });
     }
+
+    console.log(`Attempting to send email to ${email} using ${user}`);
 
     try {
       const transporter = nodemailer.createTransport({
         host: "smtp.gmail.com",
         port: 465,
-        secure: true, // use SSL
+        secure: true,
         auth: {
           user: user,
-          pass: pass.replace(/\s/g, ""), // Remove any spaces from the App Password
+          pass: pass.replace(/\s/g, ""),
         },
+        // Add timeout to prevent hanging
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
       });
 
       // Verify connection configuration
-      await transporter.verify();
+      try {
+        await transporter.verify();
+      } catch (verifyError: any) {
+        console.error("SMTP Verification Failed:", verifyError);
+        return res.status(500).json({ 
+          error: "SMTP Verification Failed", 
+          details: "গুগল সার্ভারের সাথে কানেক্ট করা যাচ্ছে না। আপনার App Password সঠিক কি না তা আবার চেক করুন।",
+          technical: verifyError.message
+        });
+      }
 
       const mailOptions = {
         from: `"Secure Doc Vault" <${user}>`,
@@ -85,6 +104,13 @@ async function startServer() {
         code: error.code 
       });
     }
+  });
+
+  app.get("/api/config-status", (req, res) => {
+    res.json({
+      emailConfigured: !!process.env.EMAIL_USER && !!process.env.EMAIL_PASS,
+      user: process.env.EMAIL_USER ? `${process.env.EMAIL_USER.split('@')[0]}...` : null
+    });
   });
 
   // Vite middleware for development
