@@ -698,12 +698,24 @@ const App: React.FC = () => {
     try {
       if (isDemoMode) {
         setFolders(folders.map(f => f.id === showLockFolder.id ? { ...f, password: folderPassword, isLocked: true } : f));
+        
+        // If the locked folder is the active one, clear it to hide contents
+        if (activeFolderId === showLockFolder.id) {
+          setActiveFolderId(null);
+        }
+        
         setShowLockFolder(null);
         setFolderPassword('');
         return;
       }
       const db = getFirebaseDb();
       await updateDoc(doc(db, 'folders', showLockFolder.id), { password: folderPassword, isLocked: true });
+      
+      // If the locked folder is the active one, clear it to hide contents
+      if (activeFolderId === showLockFolder.id) {
+        setActiveFolderId(null);
+      }
+      
       setShowLockFolder(null);
       setFolderPassword('');
     } catch (err) {
@@ -968,6 +980,8 @@ const App: React.FC = () => {
   }
 
   const currentFolder = folders.find(f => f.id === activeFolderId);
+  const isCurrentFolderLocked = currentFolder?.password && !unlockedFolderIds.includes(currentFolder.id);
+  
   const filteredFiles = files.filter(f => 
     f.folderId === activeFolderId && 
     f.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1209,13 +1223,31 @@ const App: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-10 custom-scrollbar">
-          {!activeFolderId ? (
+          {!activeFolderId || isCurrentFolderLocked ? (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
-                <FolderIcon className="w-12 h-12 text-slate-300" />
+                {isCurrentFolderLocked ? (
+                  <Lock className="w-12 h-12 text-amber-500" />
+                ) : (
+                  <FolderIcon className="w-12 h-12 text-slate-300" />
+                )}
               </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2 tracking-tight">শুরু করতে একটি ফোল্ডার বেছে নিন</h2>
-              <p className="text-slate-500 max-w-sm">বামে থাকা প্যানেল থেকে একটি ফোল্ডার সিলেক্ট করুন অথবা নতুন ফোল্ডার তৈরি করুন।</p>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2 tracking-tight">
+                {isCurrentFolderLocked ? 'ফোল্ডারটি লক করা আছে' : 'শুরু করতে একটি ফোল্ডার বেছে নিন'}
+              </h2>
+              <p className="text-slate-500 max-w-sm">
+                {isCurrentFolderLocked 
+                  ? 'ফাইলগুলো দেখতে বাম পাশের মেনু থেকে ফোল্ডারটি আনলক করুন।' 
+                  : 'বামে থাকা প্যানেল থেকে একটি ফোল্ডার সিলেক্ট করুন অথবা নতুন ফোল্ডার তৈরি করুন।'}
+              </p>
+              {isCurrentFolderLocked && (
+                <button 
+                  onClick={() => setShowUnlock(currentFolder)}
+                  className="mt-6 px-8 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+                >
+                  আনলক করুন
+                </button>
+              )}
             </div>
           ) : (
             <div className="animate-in fade-in duration-500">
