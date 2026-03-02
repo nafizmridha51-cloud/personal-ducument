@@ -24,7 +24,8 @@ import {
   Pencil,
   Check,
   FileText,
-  Share2
+  Share2,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
@@ -877,6 +878,7 @@ const App: React.FC = () => {
   };
 
   const [isSharing, setIsSharing] = useState(false);
+  const [preparingFileId, setPreparingFileId] = useState<string | null>(null);
 
   const dataUrlToBlob = (dataUrl: string) => {
     try {
@@ -896,135 +898,90 @@ const App: React.FC = () => {
   };
 
   const handleShare = async (file: FileData) => {
-    if (isSharing) {
+    if (isSharing) return;
+
+    // If file is chunked and not yet loaded, we need to prepare it first
+    if (!isDemoMode && file.isChunked && file.dataUrl === 'CHUNKED') {
+      setPreparingFileId(file.id);
+      try {
+        const db = getFirebaseDb();
+        const chunksQuery = query(
+          collection(db, 'fileChunks'), 
+          where('fileId', '==', file.id),
+          where('userId', '==', user.uid)
+        );
+        const chunksSnapshot = await getDocs(chunksQuery);
+        
+        if (chunksSnapshot.empty) {
+          alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি।');
+          setPreparingFileId(null);
+          return;
+        }
+
+        const sortedChunks = chunksSnapshot.docs
+          .map(doc => doc.data())
+          .sort((a, b) => a.index - b.index);
+
+        let fullBase64 = '';
+        sortedChunks.forEach(chunk => {
+          fullBase64 += chunk.data;
+        });
+        
+        // Update the file in the state so it's "ready" for the next click
+        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
+        
+        // We don't call share here because the user gesture is lost after async fetch.
+        // The UI will now show a "Ready" state for this file.
+      } catch (err) {
+        console.error("Prepare share error:", err);
+        alert('ফাইলটি প্রস্তুত করতে সমস্যা হয়েছে।');
+      } finally {
+        setPreparingFileId(null);
+      }
       return;
     }
 
+    // If we have the dataUrl, we can share immediately (synchronously)
     setIsSharing(true);
     try {
-      let dataUrl = file.dataUrl;
-      
-      // Handle chunked files - this async operation breaks the user gesture
-      if (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED') {
-        setIsPreviewLoading(true);
-        try {
-          const db = getFirebaseDb();
-          const chunksQuery = query(
-            collection(db, 'fileChunks'), 
-            where('fileId', '==', file.id),
-            where('userId', '==', user.uid)
-          );
-          const chunksSnapshot = await getDocs(chunksQuery);
-          
-          if (chunksSnapshot.empty) {
-            alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি।');
-            setIsPreviewLoading(false);
-            setIsSharing(false);
-            return;
-          }
-
-          const sortedChunks = chunksSnapshot.docs
-            .map(doc => doc.data())
-            .sort((a, b) => a.index - b.index);
-
-          let fullBase64 = '';
-          sortedChunks.forEach(chunk => {
-            fullBase64 += chunk.data;
-          });
-          dataUrl = fullBase64;
-          
-          // CRITICAL: After an async fetch, the user gesture is lost.
-          // We must ask the user to click again to trigger the share API.
-          setIsPreviewLoading(false);
-          const readyToShare = window.confirm('ফাইলটি শেয়ার করার জন্য প্রস্তুত। এখন শেয়ার করতে "OK" চাপুন।');
-          if (!readyToShare) {
-            setIsSharing(false);
-            return;
-          }
-          // The click on "OK" in window.confirm counts as a user gesture in some browsers,
-          // but not all. A better way is a dedicated button, but confirm is a good middle ground.
-        } catch (err) {
-          console.error("Share chunk error:", err);
-          alert('ফাইল ডেটা লোড করতে সমস্যা হয়েছে।');
-          setIsPreviewLoading(false);
-          setIsSharing(false);
-          return;
-        }
-      }
-
+      const dataUrl = file.dataUrl;
       if (!dataUrl || dataUrl === 'CHUNKED') {
-        alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
+        alert('ফাইলটি শেয়ার করার জন্য প্রস্তুত নয়।');
         setIsSharing(false);
         return;
       }
 
       if (navigator.share) {
-        try {
-          const blob = dataUrlToBlob(dataUrl);
-          if (!blob) {
-            throw new Error("Could not convert data to blob");
-          }
-          
-          const shareFile = new File([blob], file.name, { type: file.type });
-          const shareData: ShareData = {
-            files: [shareFile],
+        const blob = dataUrlToBlob(dataUrl);
+        if (!blob) throw new Error("Blob conversion failed");
+        
+        const shareFile = new File([blob], file.name, { type: file.type });
+        const shareData: ShareData = {
+          files: [shareFile],
+          title: file.name,
+          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+        };
+
+        if (navigator.canShare && navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+        } else {
+          await navigator.share({
             title: file.name,
             text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
-          };
-
-          if (navigator.canShare && navigator.canShare(shareData)) {
-            await navigator.share(shareData);
-          } else {
-            await navigator.share({
-              title: file.name,
-              text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
-            });
-          }
-        } catch (innerErr: any) {
-          console.error('Share inner error:', innerErr);
-          
-          if (innerErr.name === 'NotAllowedError' || innerErr.message?.includes('Permission denied')) {
-            // If it's a permission error, it's likely the iframe or gesture issue.
-            // We show a more helpful message.
-            throw innerErr;
-          }
-          
-          if (innerErr.message?.includes('already completed')) {
-            // Don't alert for this, just log it.
-            return;
-          }
-          
-          // Fallback to text-only share
-          try {
-            await navigator.share({
-              title: file.name,
-              text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
-            });
-          } catch (finalErr: any) {
-            if (finalErr.name !== 'AbortError' && !finalErr.message?.includes('already completed')) {
-              throw finalErr;
-            }
-          }
+          });
         }
       } else {
-        alert('আপনার ব্রাউজার সরাসরি শেয়ার সাপোর্ট করে না। ফাইলটি ডাউনলোড করে শেয়ার করুন।');
+        alert('আপনার ব্রাউজার সরাসরি শেয়ার সাপোর্ট করে না।');
       }
     } catch (err: any) {
       console.error('Sharing failed:', err);
       if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
         alert(
           'শেয়ার করার অনুমতি পাওয়া যায়নি।\n\n' +
-          'এটি সাধারণত ঘটে যদি আপনি অ্যাপটি কোনো ইন-অ্যাপ ব্রাউজারে (যেমন Facebook/Messenger) ব্যবহার করেন অথবা ব্রাউজার সিকিউরিটি পলিসি এটি ব্লক করে।\n\n' +
-          'সমাধান:\n' +
-          '১. উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন।\n' +
-          '২. অথবা ফাইলটি ডাউনলোড করে তারপর শেয়ার করুন।'
+          'সমাধান: উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন অথবা ফাইলটি ডাউনলোড করে শেয়ার করুন।'
         );
-      } else if (err.name === 'AbortError') {
-        // User cancelled
-      } else if (err.message?.includes('already completed')) {
-        // Ignore
-      } else {
-        alert('শেয়ার করতে সমস্যা হয়েছে। ফাইলটি ডাউনলোড করে শেয়ার করার চেষ্টা করুন।');
+      } else if (err.name !== 'AbortError' && !err.message?.includes('already completed')) {
+        alert('শেয়ার করতে সমস্যা হয়েছে।');
       }
     } finally {
       setIsSharing(false);
@@ -1495,10 +1452,23 @@ const App: React.FC = () => {
                           )}
                           <button 
                             onClick={() => handleShare(file)}
-                            className="p-1.5 text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-all rounded-lg"
-                            title="শেয়ার করুন"
+                            className={cn(
+                              "p-1.5 transition-all rounded-lg",
+                              preparingFileId === file.id 
+                                ? "text-indigo-500 bg-indigo-50" 
+                                : file.dataUrl !== 'CHUNKED' 
+                                  ? "text-emerald-500 bg-emerald-50" 
+                                  : "text-slate-300 hover:text-blue-500 hover:bg-blue-50"
+                            )}
+                            title={file.dataUrl !== 'CHUNKED' ? "শেয়ার করতে ক্লিক করুন" : "শেয়ার করার জন্য প্রস্তুত করুন"}
                           >
-                            <Share2 className="w-4 h-4" />
+                            {preparingFileId === file.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : file.dataUrl !== 'CHUNKED' ? (
+                              <Share2 className="w-4 h-4 fill-emerald-500/20" />
+                            ) : (
+                              <Share2 className="w-4 h-4" />
+                            )}
                           </button>
                           <button 
                             onClick={() => {
