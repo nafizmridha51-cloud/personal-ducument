@@ -23,7 +23,8 @@ import {
   X,
   Pencil,
   Check,
-  FileText
+  FileText,
+  Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
@@ -875,6 +876,87 @@ const App: React.FC = () => {
     }
   };
 
+  const handleShare = async (file: FileData) => {
+    try {
+      let dataUrl = file.dataUrl;
+      
+      // Handle chunked files
+      if (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED') {
+        setIsPreviewLoading(true);
+        try {
+          const db = getFirebaseDb();
+          const chunksQuery = query(
+            collection(db, 'fileChunks'), 
+            where('fileId', '==', file.id),
+            where('userId', '==', user.uid)
+          );
+          const chunksSnapshot = await getDocs(chunksQuery);
+          
+          if (chunksSnapshot.empty) {
+            alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি।');
+            setIsPreviewLoading(false);
+            return;
+          }
+
+          const sortedChunks = chunksSnapshot.docs
+            .map(doc => doc.data())
+            .sort((a, b) => a.index - b.index);
+
+          let fullBase64 = '';
+          sortedChunks.forEach(chunk => {
+            fullBase64 += chunk.data;
+          });
+          dataUrl = fullBase64;
+        } catch (err) {
+          console.error("Share chunk error:", err);
+          alert('ফাইল ডেটা লোড করতে সমস্যা হয়েছে।');
+          setIsPreviewLoading(false);
+          return;
+        } finally {
+          setIsPreviewLoading(false);
+        }
+      }
+
+      if (dataUrl === 'CHUNKED') {
+        alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
+        return;
+      }
+
+      if (navigator.share) {
+        // Convert data URL to Blob for sharing
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const shareFile = new File([blob], file.name, { type: file.type });
+
+        const shareData: ShareData = {
+          files: [shareFile],
+          title: file.name,
+          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+        };
+
+        // Check if browser can share these files
+        if (navigator.canShare && navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+        } else {
+          // Try sharing without files if files are not supported
+          await navigator.share({
+            title: file.name,
+            text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+          });
+        }
+      } else {
+        alert('আপনার ব্রাউজার সরাসরি শেয়ার সাপোর্ট করে না। ফাইলটি ডাউনলোড করে শেয়ার করুন।');
+      }
+    } catch (err: any) {
+      console.error('Sharing failed:', err);
+      if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+        alert('শেয়ার করার অনুমতি পাওয়া যায়নি। সম্ভবত ব্রাউজার বা সিকিউরিটি পলিসি এটি ব্লক করছে। ফাইলটি ডাউনলোড করে শেয়ার করার চেষ্টা করুন।');
+      } else if (err.name !== 'AbortError') {
+        alert('শেয়ার করতে সমস্যা হয়েছে।');
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -1337,6 +1419,13 @@ const App: React.FC = () => {
                               <Eye className="w-4 h-4" />
                             </button>
                           )}
+                          <button 
+                            onClick={() => handleShare(file)}
+                            className="p-1.5 text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-all rounded-lg"
+                            title="শেয়ার করুন"
+                          >
+                            <Share2 className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => {
                               setEditingFileId(file.id);
