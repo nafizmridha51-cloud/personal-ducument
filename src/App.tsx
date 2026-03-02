@@ -876,6 +876,23 @@ const App: React.FC = () => {
     }
   };
 
+  const dataUrlToBlob = (dataUrl: string) => {
+    try {
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    } catch (e) {
+      console.error("Blob conversion error:", e);
+      return null;
+    }
+  };
+
   const handleShare = async (file: FileData) => {
     try {
       let dataUrl = file.dataUrl;
@@ -917,28 +934,43 @@ const App: React.FC = () => {
         }
       }
 
-      if (dataUrl === 'CHUNKED') {
+      if (!dataUrl || dataUrl === 'CHUNKED') {
         alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
         return;
       }
 
       if (navigator.share) {
-        // Convert data URL to Blob for sharing
-        const res = await fetch(dataUrl);
-        const blob = await res.blob();
-        const shareFile = new File([blob], file.name, { type: file.type });
+        try {
+          // Use synchronous conversion to preserve user gesture as much as possible
+          const blob = dataUrlToBlob(dataUrl);
+          if (!blob) {
+            throw new Error("Could not convert data to blob");
+          }
+          
+          const shareFile = new File([blob], file.name, { type: file.type });
+          const shareData: ShareData = {
+            files: [shareFile],
+            title: file.name,
+            text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+          };
 
-        const shareData: ShareData = {
-          files: [shareFile],
-          title: file.name,
-          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
-        };
-
-        // Check if browser can share these files
-        if (navigator.canShare && navigator.canShare(shareData)) {
-          await navigator.share(shareData);
-        } else {
-          // Try sharing without files if files are not supported
+          // Check if browser can share these files
+          if (navigator.canShare && navigator.canShare(shareData)) {
+            await navigator.share(shareData);
+          } else {
+            // Try sharing without files if files are not supported
+            await navigator.share({
+              title: file.name,
+              text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+            });
+          }
+        } catch (innerErr: any) {
+          console.error('Share inner error:', innerErr);
+          // If it's a permission error, rethrow to outer catch
+          if (innerErr.name === 'NotAllowedError' || innerErr.message?.includes('Permission denied')) {
+            throw innerErr;
+          }
+          // Fallback for other errors
           await navigator.share({
             title: file.name,
             text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
@@ -950,9 +982,15 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error('Sharing failed:', err);
       if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
-        alert('শেয়ার করার অনুমতি পাওয়া যায়নি। সম্ভবত ব্রাউজার বা সিকিউরিটি পলিসি এটি ব্লক করছে। ফাইলটি ডাউনলোড করে শেয়ার করার চেষ্টা করুন।');
+        alert(
+          'শেয়ার করার অনুমতি পাওয়া যায়নি।\n\n' +
+          'সম্ভাব্য কারণ:\n' +
+          '১. আপনি অ্যাপটি কোনো ফ্রেম বা ইন-অ্যাপ ব্রাউজারে (যেমন Facebook/Messenger) ব্যবহার করছেন।\n' +
+          '২. ব্রাউজার সরাসরি ফাইল শেয়ার করার অনুমতি দিচ্ছে না।\n\n' +
+          'সমাধান: উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন অথবা ফাইলটি ডাউনলোড করে শেয়ার করুন।'
+        );
       } else if (err.name !== 'AbortError') {
-        alert('শেয়ার করতে সমস্যা হয়েছে।');
+        alert('শেয়ার করতে সমস্যা হয়েছে। ফাইলটি ডাউনলোড করে শেয়ার করার চেষ্টা করুন।');
       }
     }
   };
