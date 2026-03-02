@@ -25,11 +25,13 @@ import {
   Check,
   FileText,
   Share2,
-  Loader2
+  Loader2,
+  Camera,
+  User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFirebaseAuth, loginWithGoogle, logout, getFirebaseDb, isFirebaseConfigured } from './lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { 
   collection, 
   addDoc, 
@@ -39,6 +41,7 @@ import {
   deleteDoc, 
   doc, 
   updateDoc,
+  setDoc,
   serverTimestamp,
   getDocs,
   orderBy,
@@ -54,7 +57,18 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = React.useState<User | null>(null);
+  const [customProfile, setCustomProfile] = React.useState<{displayName?: string, photoURL?: string} | null>(null);
+  
+  const user = React.useMemo(() => {
+    if (!authUser) return null;
+    return {
+      ...authUser,
+      displayName: customProfile?.displayName || authUser.displayName,
+      photoURL: customProfile?.photoURL || authUser.photoURL
+    };
+  }, [authUser, customProfile]);
+
   const [loading, setLoading] = useState(true);
   const [folders, setFolders] = useState<Folder[]>(() => {
     const saved = localStorage.getItem('demo_folders');
@@ -135,6 +149,10 @@ const App: React.FC = () => {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   
   // Form States
   const [newFolderName, setNewFolderName] = useState('');
@@ -144,6 +162,7 @@ const App: React.FC = () => {
   const [error, setError] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const profilePhotoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     localStorage.setItem('is_demo_mode', isDemoMode.toString());
@@ -154,7 +173,7 @@ const App: React.FC = () => {
     }
 
     if (isDemoMode) {
-      setUser({
+      setAuthUser({
         uid: 'demo_user',
         email: 'demo@example.com',
         displayName: 'Demo User',
@@ -173,14 +192,14 @@ const App: React.FC = () => {
       const auth = getFirebaseAuth();
       unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
-          setUser({
+          setAuthUser({
             uid: firebaseUser.uid,
             email: firebaseUser.email,
             displayName: firebaseUser.displayName,
             photoURL: firebaseUser.photoURL,
           });
         } else {
-          setUser(null);
+          setAuthUser(null);
         }
         setLoading(false);
       });
@@ -200,6 +219,29 @@ const App: React.FC = () => {
   }, [folders, files, isDemoMode]);
 
   useEffect(() => {
+    if (!authUser || isDemoMode) {
+      setCustomProfile(null);
+      return;
+    }
+
+    const db = getFirebaseDb();
+    const docRef = doc(db, 'userProfiles', authUser.uid);
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setCustomProfile(docSnap.data());
+      }
+    }, (error) => {
+      if (error.code === 'permission-denied') {
+        console.warn("Firestore permissions not set for userProfiles. Please update rules in Firebase Console.");
+      } else {
+        console.error("Firestore Profile Error:", error);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [authUser?.uid, isDemoMode]);
+
+  useEffect(() => {
     if (!user || isDemoMode) return;
 
     let unsubscribeFolders: () => void;
@@ -212,6 +254,8 @@ const App: React.FC = () => {
       unsubscribeFolders = onSnapshot(foldersQuery, (snapshot) => {
         const folderList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Folder));
         setFolders(folderList.sort((a, b) => b.createdAt - a.createdAt));
+      }, (error) => {
+        console.error("Folders Snapshot Error:", error);
       });
 
       const filesQuery = query(collection(db, 'files'), where('userId', '==', user.uid));
@@ -228,6 +272,8 @@ const App: React.FC = () => {
             return newFile;
           });
         });
+      }, (error) => {
+        console.error("Files Snapshot Error:", error);
       });
     } catch (err) {
       console.error(err);
@@ -238,6 +284,65 @@ const App: React.FC = () => {
       unsubscribeFiles?.();
     };
   }, [user, isDemoMode]);
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newDisplayName.trim()) return;
+
+    setIsUpdatingProfile(true);
+    try {
+      if (isDemoMode) {
+        setAuthUser({ ...user, displayName: newDisplayName });
+        setShowProfileEdit(false);
+        return;
+      }
+
+      const db = getFirebaseDb();
+      await setDoc(doc(db, 'userProfiles', user.uid), { 
+        displayName: newDisplayName 
+      }, { merge: true });
+      setShowProfileEdit(false);
+    } catch (err) {
+      console.error(err);
+      alert('প্রোফাইল আপডেট করতে সমস্যা হয়েছে।');
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
+  const handleProfilePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    // Check file size (limit to 1MB for base64 storage in Firestore)
+    if (file.size > 1024 * 1024) {
+      alert('ছবিটি ১ মেগাবাইটের চেয়ে ছোট হতে হবে।');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      setIsUpdatingProfile(true);
+      try {
+        if (isDemoMode) {
+          setAuthUser({ ...user, photoURL: base64 });
+          return;
+        }
+
+        const db = getFirebaseDb();
+        await setDoc(doc(db, 'userProfiles', user.uid), { 
+          photoURL: base64 
+        }, { merge: true });
+      } catch (err) {
+        console.error(err);
+        alert('ছবি আপডেট করতে সমস্যা হয়েছে।');
+      } finally {
+        setIsUpdatingProfile(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleAddFolder = async () => {
     if (!newFolderName.trim() || !user) return;
@@ -1167,33 +1272,81 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col md:flex-row bg-[#f8fafc]">
       {/* Sidebar */}
       <aside className="w-full md:w-80 bg-slate-900 text-white p-6 flex flex-col border-r border-slate-800">
-          <div className="flex items-center justify-between mb-10">
-            <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 p-2 rounded-xl">
-                <Shield className="w-5 h-5" />
+          <div className="flex items-center justify-between mb-10 relative">
+            <div 
+              className="flex items-center gap-3 cursor-pointer hover:bg-slate-800/50 p-1 rounded-2xl transition-all"
+              onClick={() => setShowUserMenu(!showUserMenu)}
+            >
+              <img 
+                src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'User')}&background=6366f1&color=fff`} 
+                alt="" 
+                className="w-11 h-11 rounded-full border-2 border-indigo-500/30 shadow-lg shadow-indigo-500/10" 
+              />
+              <div className="overflow-hidden">
+                <p className="text-sm font-bold truncate text-white">{user.displayName}</p>
               </div>
-              <h1 className="text-lg font-bold tracking-tight">নথি ভল্ট</h1>
             </div>
+            
+            {showUserMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="absolute left-0 top-full mt-2 w-56 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 py-2 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="px-4 py-2 border-b border-slate-700/50 mb-1">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">অ্যাকাউন্ট</p>
+                    <p className="text-xs text-slate-300 truncate">{user.email}</p>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      setNewDisplayName(user.displayName || '');
+                      setShowProfileEdit(true);
+                      setShowUserMenu(false);
+                    }} 
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    নাম পরিবর্তন করুন
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      profilePhotoRef.current?.click();
+                      setShowUserMenu(false);
+                    }} 
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                  >
+                    <Camera className="w-4 h-4" />
+                    ছবি পরিবর্তন করুন
+                  </button>
+
+                  <div className="h-px bg-slate-700/50 my-1" />
+
+                  <button 
+                    onClick={() => {
+                      if (isDemoMode) {
+                        setIsDemoMode(false);
+                      } else {
+                        logout();
+                      }
+                      setUnlockedFolderIds([]);
+                      setActiveFolderId(null);
+                      setFolders([]);
+                      setFiles([]);
+                      setShowUserMenu(false);
+                    }} 
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    লগ আউট করুন
+                  </button>
+                </div>
+              </>
+            )}
+
             <div className="flex items-center gap-2">
               {isDemoMode && (
                 <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider">Demo</span>
               )}
-              <button 
-                onClick={() => {
-                  if (isDemoMode) {
-                    setIsDemoMode(false);
-                  } else {
-                    logout();
-                  }
-                  setUnlockedFolderIds([]);
-                  setActiveFolderId(null);
-                  setFolders([]);
-                  setFiles([]);
-                }} 
-                className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
             </div>
           </div>
 
@@ -1361,13 +1514,6 @@ const App: React.FC = () => {
               </button>
             </div>
           )}
-          <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-2xl">
-            <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border-2 border-indigo-500/30" />
-            <div className="flex-1 overflow-hidden">
-              <p className="text-sm font-bold truncate">{user.displayName}</p>
-              <p className="text-[10px] text-slate-500 truncate">{user.email}</p>
-            </div>
-          </div>
         </div>
       </aside>
 
@@ -1589,6 +1735,79 @@ const App: React.FC = () => {
           )}
         </div>
       </main>
+
+      <input 
+        type="file" 
+        ref={profilePhotoRef} 
+        className="hidden" 
+        accept="image/*" 
+        onChange={handleProfilePhotoChange} 
+      />
+
+      {/* Profile Edit Modal */}
+      <AnimatePresence>
+        {showProfileEdit && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setShowProfileEdit(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[32px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">প্রোফাইল এডিট</h2>
+                  <button onClick={() => setShowProfileEdit(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                    <X className="w-6 h-6 text-slate-400" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleUpdateProfile} className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">আপনার নাম</label>
+                    <div className="relative">
+                      <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input 
+                        type="text"
+                        value={newDisplayName}
+                        onChange={(e) => setNewDisplayName(e.target.value)}
+                        placeholder="আপনার নাম লিখুন"
+                        className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 focus:ring-0 outline-none transition-all font-medium"
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      type="button"
+                      onClick={() => setShowProfileEdit(false)}
+                      className="flex-1 py-4 px-6 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                    >
+                      বাতিল
+                    </button>
+                    <button 
+                      type="submit"
+                      disabled={isUpdatingProfile || !newDisplayName.trim()}
+                      className="flex-1 py-4 px-6 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isUpdatingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                      সেভ করুন
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Modals */}
       <AnimatePresence>
