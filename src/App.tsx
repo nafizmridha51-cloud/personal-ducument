@@ -528,10 +528,12 @@ const App: React.FC = () => {
     }
 
     try {
-      const db = getFirebaseDb();
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
+      
       await addDoc(collection(db, 'folders'), {
         name: newFolderName,
-        userId: user.uid,
+        userId: currentUserId,
         createdAt: Date.now(),
         icon: '📁',
         password: folderPassword || null,
@@ -586,7 +588,8 @@ const App: React.FC = () => {
 
     let fileDocRef: any = null;
     try {
-      const db = getFirebaseDb();
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
       
       // Read file as base64
       const reader = new FileReader();
@@ -613,7 +616,7 @@ const App: React.FC = () => {
         type: file.type,
         size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
         folderId: activeFolderId,
-        userId: user.uid,
+        userId: currentUserId,
         uploadDate: new Date().toLocaleDateString('bn-BD'),
         dataUrl: 'CHUNKED',
         isChunked: true,
@@ -633,7 +636,7 @@ const App: React.FC = () => {
           fileId: fileDoc.id,
           index: i,
           data: chunks[i],
-          userId: user.uid
+          userId: currentUserId
         });
         count++;
         
@@ -839,14 +842,15 @@ const App: React.FC = () => {
         
         if (!user) throw new Error("User not authenticated");
         
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
         console.log("Deleting file:", id);
         
         // 1. Delete chunks if any
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
           where('fileId', '==', id),
-          where('userId', '==', user.uid)
+          where('userId', '==', currentUserId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -897,7 +901,8 @@ const App: React.FC = () => {
         
         if (!user) throw new Error("User not authenticated");
         
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
         const folderFiles = files.filter(f => f.folderId === id);
         console.log(`Deleting folder ${id} with ${folderFiles.length} files`);
         
@@ -907,7 +912,7 @@ const App: React.FC = () => {
           const chunksQuery = query(
             collection(db, 'fileChunks'), 
             where('fileId', '==', file.id),
-            where('userId', '==', user.uid)
+            where('userId', '==', currentUserId)
           );
           const chunksSnapshot = await getDocs(chunksQuery);
           
@@ -1001,7 +1006,7 @@ const App: React.FC = () => {
         setFolders(folders.map(f => f.id === folder.id ? { ...f, password: '', isLocked: false } : f));
         return;
       }
-      const db = getFirebaseDb();
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       await updateDoc(doc(db, 'folders', folder.id), { password: '', isLocked: false });
     } catch (err) {
       console.error(err);
@@ -1025,7 +1030,7 @@ const App: React.FC = () => {
         setFolderPassword('');
         return;
       }
-      const db = getFirebaseDb();
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       await updateDoc(doc(db, 'folders', showLockFolder.id), { password: folderPassword, isLocked: true });
       
       // If the locked folder is the active one, clear it to hide contents
@@ -1051,7 +1056,8 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
+          where('fileId', '==', file.id),
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1116,7 +1122,8 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
+          where('fileId', '==', file.id),
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1192,7 +1199,8 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
+          where('fileId', '==', file.id),
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
