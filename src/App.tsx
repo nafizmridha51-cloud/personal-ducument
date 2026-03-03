@@ -255,6 +255,20 @@ const App: React.FC = () => {
     return () => unsubscribe?.();
   }, [isDemoMode, activeFolderId]);
 
+  // Sync user profile to make it searchable for remote access
+  useEffect(() => {
+    if (authUser && !isDemoMode) {
+      const db = getFirebaseDb();
+      const docRef = doc(db, 'userProfiles', authUser.uid);
+      setDoc(docRef, {
+        email: authUser.email?.toLowerCase(),
+        displayName: authUser.displayName,
+        photoURL: authUser.photoURL,
+        lastSeen: serverTimestamp()
+      }, { merge: true }).catch(err => console.warn("Profile sync error:", err));
+    }
+  }, [authUser, isDemoMode]);
+
   useEffect(() => {
     if (isDemoMode) {
       localStorage.setItem('demo_folders', JSON.stringify(folders));
@@ -375,21 +389,31 @@ const App: React.FC = () => {
     e.preventDefault();
     setError('');
     setIsRemoteLoggingIn(true);
+    if (!user) {
+      setError('অনুগ্রহ করে আগে লগইন করুন।');
+      setIsRemoteLoggingIn(false);
+      return;
+    }
     try {
       const db = getFirebaseDb();
       
-      // Search for user profile by email
+      // Search for user profile by email (normalized)
       const profilesRef = collection(db, 'userProfiles');
-      const q = query(profilesRef, where('email', '==', remoteEmail));
+      const normalizedEmail = remoteEmail.toLowerCase().trim();
+      const q = query(profilesRef, where('email', '==', normalizedEmail));
       const querySnapshot = await getDocs(q);
       
       if (querySnapshot.empty) {
-        throw new Error('এই ইমেইল দিয়ে কোনো ভল্ট পাওয়া যায়নি।');
+        throw new Error('এই ইমেইল দিয়ে কোনো ভল্ট পাওয়া যায়নি। নিশ্চিত করুন যে মালিক তার প্রোফাইলে রিমোট অ্যাক্সেস পাসওয়ার্ড সেট করেছেন এবং ইমেইলটি সঠিক।');
       }
 
       const profileDoc = querySnapshot.docs[0];
       const profileData = profileDoc.data();
       const targetUid = profileDoc.id;
+
+      if (targetUid === user.uid) {
+        throw new Error('আপনি নিজের ভল্ট রিমোটলি অ্যাক্সেস করতে পারবেন না। এটি আপনার ডিভাইসেই আছে।');
+      }
 
       if (!profileData.remoteAccessKey) {
         throw new Error('এই ভল্টে রিমোট অ্যাক্সেস সেট করা নেই। মালিককে পাসওয়ার্ড সেট করতে বলুন।');
@@ -431,7 +455,7 @@ const App: React.FC = () => {
       const db = getFirebaseDb();
       await setDoc(doc(db, 'userProfiles', user.uid), { 
         remoteAccessKey: remoteAccessKey.trim(),
-        email: user.email,
+        email: user.email?.toLowerCase(),
         displayName: user.displayName,
         photoURL: user.photoURL
       }, { merge: true });
@@ -1734,12 +1758,14 @@ const App: React.FC = () => {
           <div>
             <div className="flex items-center justify-between mb-4">
               <p className="text-[11px] uppercase text-slate-500 font-bold tracking-wider">আপনার ফোল্ডার</p>
-              <button 
-                onClick={() => setShowAddFolder(true)}
-                className="p-1 hover:bg-slate-800 rounded-md text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+              {!remoteAccess.isActive && (
+                <button 
+                  onClick={() => setShowAddFolder(true)}
+                  className="p-1 hover:bg-slate-800 rounded-md text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
             </div>
             
             <div className="space-y-1">
@@ -1912,7 +1938,7 @@ const App: React.FC = () => {
             />
           </div>
           
-          {activeFolderId && (
+          {activeFolderId && !remoteAccess.isActive && (
             <button
               onClick={() => setShowUpload(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100"
