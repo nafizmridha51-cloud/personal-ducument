@@ -223,6 +223,17 @@ const App: React.FC = () => {
         return;
       }
       const auth = getFirebaseAuth();
+      
+      // Check if we were in a remote session before refresh
+      if (sessionStorage.getItem('remote_session_active') === 'true') {
+        sessionStorage.removeItem('remote_session_active');
+        logout().then(() => {
+          setAuthUser(null);
+          setLoading(false);
+        });
+        return;
+      }
+
       unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
           setAuthUser({
@@ -365,40 +376,47 @@ const App: React.FC = () => {
     setError('');
     setIsRemoteLoggingIn(true);
     try {
-      const result = await getSecondaryAuthAndDb(remoteEmail, remotePassword);
+      const db = getFirebaseDb();
       
-      // Fetch remote user's profile to check remoteAccessKey
-      const profileDoc = await getDoc(doc(result.db, 'userProfiles', result.user.uid));
+      // Search for user profile by email
+      const profilesRef = collection(db, 'userProfiles');
+      const q = query(profilesRef, where('email', '==', remoteEmail));
+      const querySnapshot = await getDocs(q);
+      
+      if (querySnapshot.empty) {
+        throw new Error('এই ইমেইল দিয়ে কোনো ভল্ট পাওয়া যায়নি।');
+      }
+
+      const profileDoc = querySnapshot.docs[0];
       const profileData = profileDoc.data();
-      
-      if (profileData && profileData.remoteAccessKey) {
-        if (profileData.remoteAccessKey !== remoteAccessKeyInput) {
-          throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
-        }
+      const targetUid = profileDoc.id;
+
+      if (!profileData.remoteAccessKey) {
+        throw new Error('এই ভল্টে রিমোট অ্যাক্সেস সেট করা নেই। মালিককে পাসওয়ার্ড সেট করতে বলুন।');
+      }
+
+      if (profileData.remoteAccessKey !== remoteAccessKeyInput) {
+        throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
       }
 
       setRemoteAccess({
         isActive: true,
         user: {
-          uid: result.user.uid,
-          email: result.user.email || '',
-          displayName: result.user.displayName || 'Remote User',
-          photoURL: result.user.photoURL || ''
+          uid: targetUid,
+          email: profileData.email || remoteEmail,
+          displayName: profileData.displayName || 'Remote User',
+          photoURL: profileData.photoURL || ''
         },
-        db: result.db,
-        app: result.app
+        db: db,
+        app: null
       });
+      sessionStorage.setItem('remote_session_active', 'true');
       setShowRemoteLogin(false);
       setRemoteEmail('');
-      setRemotePassword('');
       setRemoteAccessKeyInput('');
       setActiveFolderId(null);
     } catch (err: any) {
-      if (err.message === 'রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।') {
-        setError(err.message);
-      } else {
-        setError('রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে। ইমেইল বা পাসওয়ার্ড ভুল হতে পারে।');
-      }
+      setError(err.message || 'রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে।');
       console.error(err);
     } finally {
       setIsRemoteLoggingIn(false);
@@ -412,7 +430,10 @@ const App: React.FC = () => {
     try {
       const db = getFirebaseDb();
       await setDoc(doc(db, 'userProfiles', user.uid), { 
-        remoteAccessKey: remoteAccessKey 
+        remoteAccessKey: remoteAccessKey,
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL
       }, { merge: true });
       setShowRemoteSettings(false);
       alert('রিমোট অ্যাক্সেস পাসওয়ার্ড সফলভাবে সেট করা হয়েছে।');
@@ -428,6 +449,7 @@ const App: React.FC = () => {
     if (remoteAccess.app) {
       await closeSecondaryApp(remoteAccess.app);
     }
+    sessionStorage.removeItem('remote_session_active');
     setRemoteAccess({
       isActive: false,
       user: null,
@@ -1432,27 +1454,13 @@ const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">পাসওয়ার্ড</label>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input 
-                      type="password" 
-                      required
-                      placeholder="••••••••"
-                      value={remotePassword}
-                      onChange={(e) => setRemotePassword(e.target.value)}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড (ঐচ্ছিক)</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
                   <div className="relative">
                     <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
                       type="password" 
-                      placeholder="যদি সেট করা থাকে"
+                      required
+                      placeholder="মালিকের সেট করা পাসওয়ার্ড দিন"
                       value={remoteAccessKeyInput}
                       onChange={(e) => setRemoteAccessKeyInput(e.target.value)}
                       className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
