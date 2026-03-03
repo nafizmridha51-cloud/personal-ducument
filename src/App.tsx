@@ -1062,7 +1062,7 @@ const App: React.FC = () => {
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
           where('fileId', '==', file.id),
-          where('userId', '==', user.uid)
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1126,7 +1126,7 @@ const App: React.FC = () => {
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
           where('fileId', '==', file.id),
-          where('userId', '==', user.uid)
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1201,7 +1201,7 @@ const App: React.FC = () => {
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
           where('fileId', '==', file.id),
-          where('userId', '==', user.uid)
+          where('userId', '==', file.userId)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1819,80 +1819,82 @@ const App: React.FC = () => {
                           <span className="text-sm font-medium truncate">{folder.name}</span>
                         </button>
                         
-                        <div className="relative">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveFolderMenuId(activeFolderMenuId === folder.id ? null : folder.id);
-                            }}
-                            className={cn(
-                              "p-2 transition-all rounded-lg",
-                              activeFolderMenuId === folder.id 
-                                ? "text-white bg-slate-800" 
-                                : "md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-white hover:bg-slate-800"
-                            )}
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
-                          
-                          {activeFolderMenuId === folder.id && (
-                            <>
-                              <div className="fixed inset-0 z-40" onClick={() => setActiveFolderMenuId(null)} />
-                              <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 py-1 overflow-hidden">
-                                <button 
-                                  onClick={() => {
-                                    setEditingFolderId(folder.id);
-                                    setEditingFolderName(folder.name);
-                                    setActiveFolderMenuId(null);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" /> নাম পরিবর্তন
-                                </button>
-                                
-                                {folder.password ? (
+                        {!remoteAccess.isActive && (
+                          <div className="relative">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveFolderMenuId(activeFolderMenuId === folder.id ? null : folder.id);
+                              }}
+                              className={cn(
+                                "p-2 transition-all rounded-lg",
+                                activeFolderMenuId === folder.id 
+                                  ? "text-white bg-slate-800" 
+                                  : "md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-white hover:bg-slate-800"
+                              )}
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                            
+                            {activeFolderMenuId === folder.id && (
+                              <>
+                                <div className="fixed inset-0 z-40" onClick={() => setActiveFolderMenuId(null)} />
+                                <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 py-1 overflow-hidden">
                                   <button 
                                     onClick={() => {
-                                      removeFolderLock(folder);
+                                      setEditingFolderId(folder.id);
+                                      setEditingFolderName(folder.name);
                                       setActiveFolderMenuId(null);
                                     }}
-                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-amber-400 hover:bg-slate-700 transition-colors"
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                                   >
-                                    <Unlock className="w-3.5 h-3.5" /> লক মুছুন
+                                    <Pencil className="w-3.5 h-3.5" /> নাম পরিবর্তন
                                   </button>
-                                ) : (
-                                  <button 
-                                    onClick={() => {
-                                      setShowLockFolder(folder);
-                                      setActiveFolderMenuId(null);
-                                    }}
-                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-indigo-400 hover:bg-slate-700 transition-colors"
-                                  >
-                                    <Lock className="w-3.5 h-3.5" /> লক করুন
-                                  </button>
-                                )}
-                                
-                                <div className="h-px bg-slate-700/50 my-1" />
-                                
-                                <button 
-                                  onClick={() => {
-                                    deleteFolder(folder.id);
-                                    setActiveFolderMenuId(null);
-                                  }}
-                                  disabled={isDeleting === folder.id}
-                                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
-                                >
-                                  {isDeleting === folder.id ? (
-                                    <div className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+                                  
+                                  {folder.password ? (
+                                    <button 
+                                      onClick={() => {
+                                        removeFolderLock(folder);
+                                        setActiveFolderMenuId(null);
+                                      }}
+                                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-amber-400 hover:bg-slate-700 transition-colors"
+                                    >
+                                      <Unlock className="w-3.5 h-3.5" /> লক মুছুন
+                                    </button>
                                   ) : (
-                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <button 
+                                      onClick={() => {
+                                        setShowLockFolder(folder);
+                                        setActiveFolderMenuId(null);
+                                      }}
+                                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-indigo-400 hover:bg-slate-700 transition-colors"
+                                    >
+                                      <Lock className="w-3.5 h-3.5" /> লক করুন
+                                    </button>
                                   )}
-                                  মুছুন
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                                  
+                                  <div className="h-px bg-slate-700/50 my-1" />
+                                  
+                                  <button 
+                                    onClick={() => {
+                                      deleteFolder(folder.id);
+                                      setActiveFolderMenuId(null);
+                                    }}
+                                    disabled={isDeleting === folder.id}
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+                                  >
+                                    {isDeleting === folder.id ? (
+                                      <div className="w-3 h-3 border-2 border-rose-400 border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    )}
+                                    মুছুন
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -2053,32 +2055,36 @@ const App: React.FC = () => {
                               <Share2 className="w-4 h-4" />
                             )}
                           </button>
-                          <button 
-                            onClick={() => {
-                              setEditingFileId(file.id);
-                              setEditingFileName(file.name);
-                            }}
-                            className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                            title="নাম পরিবর্তন করুন"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={() => deleteFile(file.id)}
-                            disabled={isDeleting === file.id}
-                            className={cn(
-                              "p-1.5 transition-all rounded-lg",
-                              isDeleting === file.id
-                                ? "opacity-50 cursor-not-allowed"
-                                : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
-                            )}
-                          >
-                            {isDeleting === file.id ? (
-                              <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
+                          {!remoteAccess.isActive && (
+                            <>
+                              <button 
+                                onClick={() => {
+                                  setEditingFileId(file.id);
+                                  setEditingFileName(file.name);
+                                }}
+                                className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                                title="নাম পরিবর্তন করুন"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => deleteFile(file.id)}
+                                disabled={isDeleting === file.id}
+                                className={cn(
+                                  "p-1.5 transition-all rounded-lg",
+                                  isDeleting === file.id
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
+                                )}
+                              >
+                                {isDeleting === file.id ? (
+                                  <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4" />
+                                )}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                       
