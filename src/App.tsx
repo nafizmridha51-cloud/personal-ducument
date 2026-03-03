@@ -395,7 +395,7 @@ const App: React.FC = () => {
         throw new Error('এই ভল্টে রিমোট অ্যাক্সেস সেট করা নেই। মালিককে পাসওয়ার্ড সেট করতে বলুন।');
       }
 
-      if (profileData.remoteAccessKey !== remoteAccessKeyInput) {
+      if (profileData.remoteAccessKey.trim() !== remoteAccessKeyInput.trim()) {
         throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
       }
 
@@ -430,7 +430,7 @@ const App: React.FC = () => {
     try {
       const db = getFirebaseDb();
       await setDoc(doc(db, 'userProfiles', user.uid), { 
-        remoteAccessKey: remoteAccessKey,
+        remoteAccessKey: remoteAccessKey.trim(),
         email: user.email,
         displayName: user.displayName,
         photoURL: user.photoURL
