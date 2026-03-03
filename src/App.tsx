@@ -224,16 +224,6 @@ const App: React.FC = () => {
       }
       const auth = getFirebaseAuth();
       
-      // Check if we were in a remote session before refresh
-      if (sessionStorage.getItem('remote_session_active') === 'true') {
-        sessionStorage.removeItem('remote_session_active');
-        logout().then(() => {
-          setAuthUser(null);
-          setLoading(false);
-        });
-        return;
-      }
-
       unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
           setAuthUser({
@@ -1058,19 +1048,20 @@ const App: React.FC = () => {
       setIsUploading(true); // Reusing uploading state for loading
       try {
         console.log("Attempting to download chunked file. ID:", file.id);
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
         if (chunksSnapshot.empty) {
           console.error("No chunks found in Firestore for file ID:", file.id);
-          if (window.confirm('এই ফাইলটির কোনো ডেটা খুঁজে পাওয়া যায়নি। সম্ভবত এটি সঠিকভাবে আপলোড হয়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+          if (!remoteAccess.isActive && window.confirm('এই ফাইলটির কোনো ডেটা খুঁজে পাওয়া যায়নি। সম্ভবত এটি সঠিকভাবে আপলোড হয়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
             await deleteDoc(doc(db, 'files', file.id));
             setFiles(files.filter(f => f.id !== file.id));
+          } else if (remoteAccess.isActive) {
+            alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি। এটি লোড করা সম্ভব হচ্ছে না।');
           }
           setIsUploading(false);
           return;
@@ -1122,19 +1113,20 @@ const App: React.FC = () => {
       setIsPreviewLoading(true);
       try {
         console.log("Attempting to preview chunked file. ID:", file.id);
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
         if (chunksSnapshot.empty) {
           console.error("No chunks found in Firestore for preview. File ID:", file.id);
-          if (window.confirm('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না কারণ এর কোনো ডেটা খুঁজে পাওয়া যায়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+          if (!remoteAccess.isActive && window.confirm('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না কারণ এর কোনো ডেটা খুঁজে পাওয়া যায়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
             await deleteDoc(doc(db, 'files', file.id));
             setFiles(files.filter(f => f.id !== file.id));
+          } else if (remoteAccess.isActive) {
+            alert('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না। ডেটা পাওয়া যায়নি।');
           }
           setIsPreviewLoading(false);
           return;
@@ -1197,11 +1189,10 @@ const App: React.FC = () => {
     if (!isDemoMode && file.isChunked && file.dataUrl === 'CHUNKED') {
       setPreparingFileId(file.id);
       try {
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1561,8 +1552,55 @@ const App: React.FC = () => {
               </div>
 
               <form onSubmit={handleSaveRemoteKey} className="space-y-6">
+                {remoteAccess.isActive && remoteAccess.user && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl mb-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                        <UserIcon className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">বর্তমানে অ্যাক্সেস করা ভল্ট</p>
+                        <p className="text-sm font-bold text-slate-900">{remoteAccess.user.email}</p>
+                      </div>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={handleExitRemoteAccess}
+                      className="w-full py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-all"
+                    >
+                      রিমোট অ্যাক্সেস বন্ধ করুন
+                    </button>
+                  </div>
+                )}
+
+                {!remoteAccess.isActive && (
+                  <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl mb-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                        <ExternalLink className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-900">অন্য ভল্ট অ্যাক্সেস করুন</p>
+                        <p className="text-[10px] text-slate-500">অন্যের ডকুমেন্ট দেখতে এখানে ক্লিক করুন</p>
+                      </div>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setShowRemoteSettings(false);
+                        setShowRemoteLogin(true);
+                      }}
+                      className="w-full py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all"
+                    >
+                      রিমোট ভল্ট অ্যাক্সেস
+                    </button>
+                  </div>
+                )}
+
+                <div className="h-px bg-slate-100 my-4" />
+
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">আপনার রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
@@ -1681,17 +1719,6 @@ const App: React.FC = () => {
                   >
                     <Camera className="w-4 h-4" />
                     ছবি পরিবর্তন করুন
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      setShowRemoteLogin(true);
-                      setShowUserMenu(false);
-                    }} 
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    রিমোট ভল্ট অ্যাক্সেস
                   </button>
 
                   <button 
