@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Plus,
   Eye,
+  EyeOff,
   X,
   Pencil,
   Check,
@@ -83,6 +84,7 @@ const App: React.FC = () => {
   }, [authUser, customProfile]);
 
   const [loading, setLoading] = useState(true);
+  const [showRulesGuide, setShowRulesGuide] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>(() => {
     const saved = localStorage.getItem('demo_folders');
@@ -170,7 +172,9 @@ const App: React.FC = () => {
   const [remoteEmail, setRemoteEmail] = useState('');
   const [remotePassword, setRemotePassword] = useState('');
   const [remoteAccessKeyInput, setRemoteAccessKeyInput] = useState('');
+  const [showRemoteAccessKeyInput, setShowRemoteAccessKeyInput] = useState(false);
   const [remoteAccessKey, setRemoteAccessKey] = useState('');
+  const [showRemoteAccessKey, setShowRemoteAccessKey] = useState(false);
   const [isRemoteLoggingIn, setIsRemoteLoggingIn] = useState(false);
   const [isSavingRemoteKey, setIsSavingRemoteKey] = useState(false);
   const [remoteAccess, setRemoteAccess] = useState<{
@@ -285,8 +289,7 @@ const App: React.FC = () => {
       setPermissionError(null);
     }, (error) => {
       if (error.code === 'permission-denied') {
-        setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
-        console.warn("Firestore permissions not set for userProfiles. Please update rules in Firebase Console.");
+        setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
       } else {
         console.error("Firestore Profile Error:", error);
       }
@@ -314,7 +317,7 @@ const App: React.FC = () => {
         setPermissionError(null);
       }, (error) => {
         if (error.code === 'permission-denied') {
-          setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
+          setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
         }
         console.error("Folders Snapshot Error:", error);
       });
@@ -336,7 +339,7 @@ const App: React.FC = () => {
         });
       }, (error) => {
         if (error.code === 'permission-denied') {
-          setPermissionError("Firestore Security Rules are missing or incorrect. Please update them in Firebase Console.");
+          setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
         }
         console.error("Files Snapshot Error:", error);
       });
@@ -409,7 +412,10 @@ const App: React.FC = () => {
         throw new Error('এই ভল্টে রিমোট অ্যাক্সেস সেট করা নেই। মালিককে পাসওয়ার্ড সেট করতে বলুন।');
       }
 
-      if (profileData.remoteAccessKey.trim() !== remoteAccessKeyInput.trim()) {
+      const storedKey = String(profileData.remoteAccessKey || '').trim();
+      const inputKey = String(remoteAccessKeyInput || '').trim();
+
+      if (storedKey !== inputKey) {
         throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
       }
 
@@ -430,7 +436,12 @@ const App: React.FC = () => {
       setRemoteAccessKeyInput('');
       setActiveFolderId(null);
     } catch (err: any) {
-      setError(err.message || 'রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে।');
+      if (err.code === 'permission-denied') {
+        setError('পারমিশন এরর! ফায়ারবেস সিকিউরিটি রুলস আপডেট করা নেই।');
+        setShowRulesGuide(true);
+      } else {
+        setError(err.message || 'রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে।');
+      }
       console.error(err);
     } finally {
       setIsRemoteLoggingIn(false);
@@ -444,7 +455,7 @@ const App: React.FC = () => {
     try {
       const db = getFirebaseDb();
       await setDoc(doc(db, 'userProfiles', user.uid), { 
-        remoteAccessKey: remoteAccessKey.trim(),
+        remoteAccessKey: String(remoteAccessKey || '').trim(),
         email: user.email?.toLowerCase(),
         displayName: user.displayName,
         photoURL: user.photoURL
@@ -849,8 +860,7 @@ const App: React.FC = () => {
         // 1. Delete chunks if any
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', id),
-          where('userId', '==', currentUserId)
+          where('fileId', '==', id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -911,8 +921,7 @@ const App: React.FC = () => {
           // Delete chunks
           const chunksQuery = query(
             collection(db, 'fileChunks'), 
-            where('fileId', '==', file.id),
-            where('userId', '==', currentUserId)
+            where('fileId', '==', file.id)
           );
           const chunksSnapshot = await getDocs(chunksQuery);
           
@@ -1056,8 +1065,7 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1122,8 +1130,7 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1199,8 +1206,7 @@ const App: React.FC = () => {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const chunksQuery = query(
           collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id),
-          where('userId', '==', file.userId)
+          where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
@@ -1481,13 +1487,20 @@ const App: React.FC = () => {
                   <div className="relative">
                     <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
-                      type="password" 
+                      type={showRemoteAccessKeyInput ? "text" : "password"} 
                       required
                       placeholder="মালিকের সেট করা পাসওয়ার্ড দিন"
                       value={remoteAccessKeyInput}
                       onChange={(e) => setRemoteAccessKeyInput(e.target.value)}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                      className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowRemoteAccessKeyInput(!showRemoteAccessKeyInput)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showRemoteAccessKeyInput ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
@@ -1612,13 +1625,20 @@ const App: React.FC = () => {
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
-                      type="password" 
+                      type={showRemoteAccessKey ? "text" : "password"} 
                       required
                       placeholder="নতুন পাসওয়ার্ড দিন"
                       value={remoteAccessKey}
                       onChange={(e) => setRemoteAccessKey(e.target.value)}
-                      className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
+                      className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowRemoteAccessKey(!showRemoteAccessKey)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showRemoteAccessKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
@@ -1669,13 +1689,144 @@ const App: React.FC = () => {
               <AlertCircle size={16} />
               <span>{permissionError}</span>
               <button 
+                onClick={() => setShowRulesGuide(true)}
+                className="ml-4 underline hover:no-underline font-bold"
+              >
+                কিভাবে সমাধান করবেন?
+              </button>
+              <button 
                 onClick={() => setPermissionError(null)}
-                className="ml-4 underline hover:no-underline"
+                className="ml-4 opacity-70 hover:opacity-100"
               >
                 Dismiss
               </button>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Firestore Rules Guide Modal */}
+      <AnimatePresence>
+        {showRulesGuide && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-indigo-100 rounded-xl">
+                    <Shield className="w-6 h-6 text-indigo-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900">Firestore পারমিশন সমাধান</h3>
+                </div>
+                <button onClick={() => setShowRulesGuide(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all">
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+                  <p className="text-sm text-amber-800 leading-relaxed">
+                    "Missing or insufficient permissions" এররটি সাধারণত ফায়ারবেস সিকিউরিটি রুলস এর কারণে হয়। রিমোট অ্যাক্সেস কাজ করার জন্য আপনাকে নিচের রুলসগুলো ফায়ারবেস কনসোলে আপডেট করতে হবে।
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-bold text-slate-800">ধাপসমূহ:</h4>
+                  <ol className="list-decimal list-inside text-sm text-slate-600 space-y-2 ml-2">
+                    <li>Firebase Console এ যান।</li>
+                    <li>বাম পাশের মেনু থেকে <span className="font-bold">Firestore Database</span> এ ক্লিক করুন।</li>
+                    <li>উপরে থাকা <span className="font-bold">Rules</span> ট্যাবে ক্লিক করুন।</li>
+                    <li><span className="text-red-600 font-bold">গুরুত্বপূর্ণ:</span> এডিটর-এ থাকা আগের সব কোড মুছে ফেলুন (Select All and Delete)।</li>
+                    <li>নিচের কোডটি কপি করে সেখানে পেস্ট করুন এবং <span className="font-bold">Publish</span> এ ক্লিক করুন।</li>
+                  </ol>
+                </div>
+
+                <div className="relative group">
+                  <div className="absolute right-4 top-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => {
+                        const code = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ১. ইউজার প্রোফাইল: যে কেউ লগইন থাকলে অন্য ইউজারের রিমোট কী চেক করতে পারবে
+    match /userProfiles/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // ২. ফোল্ডার: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    match /folders/{folderId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // ৩. ফাইল মেটাডেটা: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    match /files/{fileId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // ৪. ফাইলের টুকরো (Chunks): ডাউনলোড করার জন্য এটি পড়া প্রয়োজন
+    match /fileChunks/{chunkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+  }
+}`;
+                        navigator.clipboard.writeText(code);
+                        alert('কোড কপি করা হয়েছে!');
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-lg"
+                    >
+                      Copy Code
+                    </button>
+                  </div>
+                  <pre className="bg-slate-900 text-slate-300 p-6 rounded-2xl text-xs overflow-x-auto font-mono leading-relaxed">
+{`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ১. ইউজার প্রোফাইল: যে কেউ লগইন থাকলে অন্য ইউজারের রিমোট কী চেক করতে পারবে
+    match /userProfiles/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // ২. ফোল্ডার: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    match /folders/{folderId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // ৩. ফাইল মেটাডেটা: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    match /files/{fileId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // ৪. ফাইলের টুকরো (Chunks): ডাউনলোড করার জন্য এটি পড়া প্রয়োজন
+    match /fileChunks/{chunkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+  }
+}`}
+                  </pre>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
