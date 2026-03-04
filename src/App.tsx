@@ -254,14 +254,13 @@ const App: React.FC = () => {
     if (authUser && !isDemoMode) {
       const db = getFirebaseDb();
       const docRef = doc(db, 'userProfiles', authUser.uid);
+      // Only sync email and lastSeen automatically to avoid overwriting custom displayName/photoURL
       setDoc(docRef, {
         email: authUser.email?.toLowerCase(),
-        displayName: authUser.displayName,
-        photoURL: authUser.photoURL,
         lastSeen: serverTimestamp()
       }, { merge: true }).catch(err => console.warn("Profile sync error:", err));
     }
-  }, [authUser, isDemoMode]);
+  }, [authUser?.uid, isDemoMode]);
 
   useEffect(() => {
     if (isDemoMode) {
@@ -366,10 +365,25 @@ const App: React.FC = () => {
       }
 
       const db = getFirebaseDb();
+      const auth = getFirebaseAuth();
+      
+      // 1. Update Firestore Profile (Primary source for this app)
       await setDoc(doc(db, 'userProfiles', user.uid), { 
         displayName: newDisplayName 
       }, { merge: true });
+
+      // 2. Update Firebase Auth Profile (For consistency)
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { displayName: newDisplayName });
+      }
+
+      // 3. Update local state for immediate feedback
+      if (authUser) {
+        setAuthUser({ ...authUser, displayName: newDisplayName });
+      }
+
       setShowProfileEdit(false);
+      alert('প্রোফাইল সফলভাবে আপডেট করা হয়েছে।');
     } catch (err) {
       console.error(err);
       alert('প্রোফাইল আপডেট করতে সমস্যা হয়েছে।');
@@ -488,9 +502,9 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Check file size (limit to 1MB for base64 storage in Firestore)
-    if (file.size > 1024 * 1024) {
-      alert('ছবিটি ১ মেগাবাইটের চেয়ে ছোট হতে হবে।');
+    // Check file size (limit to 700KB for base64 storage in Firestore to stay under 1MB limit)
+    if (file.size > 700 * 1024) {
+      alert('ছবিটি ৭০০ কিলোবাইটের চেয়ে ছোট হতে হবে।');
       return;
     }
 
@@ -505,9 +519,24 @@ const App: React.FC = () => {
         }
 
         const db = getFirebaseDb();
+        const auth = getFirebaseAuth();
+
+        // 1. Update Firestore Profile
         await setDoc(doc(db, 'userProfiles', user.uid), { 
           photoURL: base64 
         }, { merge: true });
+
+        // 2. Update Firebase Auth Profile
+        if (auth.currentUser) {
+          await updateProfile(auth.currentUser, { photoURL: base64 });
+        }
+
+        // 3. Update local state for immediate feedback
+        if (authUser) {
+          setAuthUser({ ...authUser, photoURL: base64 });
+        }
+
+        alert('প্রোফাইল ছবি আপডেট করা হয়েছে।');
       } catch (err) {
         console.error(err);
         alert('ছবি আপডেট করতে সমস্যা হয়েছে।');
