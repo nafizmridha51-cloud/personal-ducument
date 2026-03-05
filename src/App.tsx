@@ -33,7 +33,8 @@ import {
   ExternalLink,
   ShieldCheck,
   ArrowRightLeft,
-  Languages
+  Languages,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -194,6 +195,7 @@ const App: React.FC = () => {
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showRemoteLogin, setShowRemoteLogin] = useState(false);
   const [showRemoteSettings, setShowRemoteSettings] = useState(false);
@@ -1911,9 +1913,25 @@ service cloud.firestore {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden h-full">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden h-full relative">
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {showMobileSidebar && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowMobileSidebar(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <aside className="w-full md:w-80 bg-slate-900 text-white flex flex-col border-r border-slate-800 h-full overflow-hidden">
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 w-72 md:w-80 bg-slate-900 text-white flex flex-col border-r border-slate-800 h-full overflow-hidden transition-transform duration-300 md:relative md:translate-x-0",
+        showMobileSidebar ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
           <div className="p-6 pb-0">
             <div className="flex items-center justify-between mb-10 relative">
               <div 
@@ -2046,7 +2064,10 @@ service cloud.firestore {
             
             <div className="space-y-1">
               <button
-                onClick={() => setActiveFolderId(null)}
+                onClick={() => {
+                  setActiveFolderId(null);
+                  setShowMobileSidebar(false);
+                }}
                 className={cn(
                   "w-full flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
                   activeFolderId === null 
@@ -2091,6 +2112,7 @@ service cloud.firestore {
                             } else {
                               setActiveFolderId(folder.id);
                             }
+                            setShowMobileSidebar(false);
                           }}
                           className={cn(
                             "flex-1 flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
@@ -2219,25 +2241,33 @@ service cloud.firestore {
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 p-4 md:px-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder={t('searchFiles')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
-            />
+        <header className="bg-white border-b border-slate-200 p-4 md:px-10 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 flex-1 max-w-md">
+            <button 
+              onClick={() => setShowMobileSidebar(true)}
+              className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 md:hidden"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder={t('searchFiles')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
+              />
+            </div>
           </div>
           
           {activeFolderId && !remoteAccess.isActive && (
             <button
               onClick={() => setShowUpload(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 md:px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100 shrink-0"
             >
               <FilePlus className="w-4 h-4" />
-              {t('newFile')}
+              <span className="hidden sm:inline">{t('newFile')}</span>
             </button>
           )}
         </header>
@@ -2330,7 +2360,7 @@ service cloud.firestore {
                       }
 
                       return (
-                        <button
+                        <div
                           key={folder.id}
                           onClick={() => {
                             if (isLocked) {
@@ -2339,7 +2369,7 @@ service cloud.firestore {
                               setActiveFolderId(folder.id);
                             }
                           }}
-                          className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group relative"
+                          className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group relative cursor-pointer"
                         >
                           {!remoteAccess.isActive && (
                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -2375,7 +2405,7 @@ service cloud.firestore {
                             )}
                           </div>
                           <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{folder.name}</span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
