@@ -30,7 +30,10 @@ import {
   Camera,
   User as UserIcon,
   ExternalLink,
-  ShieldCheck
+  ShieldCheck,
+  ArrowRightLeft,
+  Languages,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -62,6 +65,8 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { User, Folder, FileData } from './types';
+import { translations } from './translations';
+import { analyzeDocument } from './services/geminiService';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Settings, Info } from 'lucide-react';
@@ -86,6 +91,29 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showRulesGuide, setShowRulesGuide] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<'bn' | 'en'>(() => {
+    const saved = localStorage.getItem('app_language');
+    return (saved as 'bn' | 'en') || 'bn';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('app_language', language);
+  }, [language]);
+
+  const t = (key: keyof typeof translations['bn'], params?: Record<string, string>) => {
+    let text = (translations[language][key] || translations['en'][key] || key) as string;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(`{${k}}`, v);
+      });
+    }
+    return text;
+  };
+
+  const toggleLanguage = () => {
+    setLanguage(prev => prev === 'bn' ? 'en' : 'bn');
+  };
+
   const [folders, setFolders] = useState<Folder[]>(() => {
     const saved = localStorage.getItem('demo_folders');
     return saved ? JSON.parse(saved) : [];
@@ -162,6 +190,7 @@ const App: React.FC = () => {
   const [showLockFolder, setShowLockFolder] = useState<Folder | null>(null);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editingFileName, setEditingFileName] = useState('');
+  const [movingFile, setMovingFile] = useState<FileData | null>(null);
   const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
@@ -190,6 +219,8 @@ const App: React.FC = () => {
   });
   const [newDisplayName, setNewDisplayName] = useState('');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [fileSummaries, setFileSummaries] = useState<Record<string, string>>({});
+  const [summarizingId, setSummarizingId] = useState<string | null>(null);
   
   // Form States
   const [newFolderName, setNewFolderName] = useState('');
@@ -288,7 +319,7 @@ const App: React.FC = () => {
       setPermissionError(null);
     }, (error) => {
       if (error.code === 'permission-denied') {
-        setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
+        setPermissionError(t('permissionError'));
       } else {
         console.error("Firestore Profile Error:", error);
       }
@@ -316,7 +347,7 @@ const App: React.FC = () => {
         setPermissionError(null);
       }, (error) => {
         if (error.code === 'permission-denied') {
-          setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
+          setPermissionError(t('permissionError'));
         }
         console.error("Folders Snapshot Error:", error);
       });
@@ -338,7 +369,7 @@ const App: React.FC = () => {
         });
       }, (error) => {
         if (error.code === 'permission-denied') {
-          setPermissionError("পারমিশন এরর! রিমোট অ্যাক্সেস কাজ করার জন্য ফায়ারবেস সিকিউরিটি রুলস আপডেট করতে হবে।");
+          setPermissionError(t('permissionError'));
         }
         console.error("Files Snapshot Error:", error);
       });
@@ -383,12 +414,39 @@ const App: React.FC = () => {
       }
 
       setShowProfileEdit(false);
-      alert('প্রোফাইল সফলভাবে আপডেট করা হয়েছে।');
+      alert(t('profileUpdated'));
     } catch (err) {
       console.error(err);
-      alert('প্রোফাইল আপডেট করতে সমস্যা হয়েছে।');
+      alert(t('loginError'));
     } finally {
       setIsUpdatingProfile(false);
+    }
+  };
+
+  const handleSummarize = async (file: FileData) => {
+    if (summarizingId) return;
+    setSummarizingId(file.id);
+    try {
+      let base64Data = file.dataUrl;
+      if (base64Data === 'CHUNKED') {
+        const dbToUse = remoteAccess.isActive ? remoteAccess.db : getFirebaseDb();
+        if (!dbToUse) throw new Error("Database not initialized");
+        
+        const q = query(
+          collection(dbToUse, 'fileChunks'),
+          where('fileId', '==', file.id),
+          orderBy('index', 'asc')
+        );
+        const chunkDocs = await getDocs(q);
+        base64Data = 'data:' + file.type + ';base64,' + chunkDocs.docs.map(doc => doc.data().data).join('');
+      }
+      const summary = await analyzeDocument(file.name, base64Data, file.type);
+      setFileSummaries(prev => ({ ...prev, [file.id]: summary }));
+    } catch (error) {
+      console.error("Summarize Error:", error);
+      alert(t('previewLoadGeneralError'));
+    } finally {
+      setSummarizingId(null);
     }
   };
 
@@ -397,7 +455,7 @@ const App: React.FC = () => {
     setError('');
     setIsRemoteLoggingIn(true);
     if (!user) {
-      setError('অনুগ্রহ করে আগে লগইন করুন।');
+      setError(t('loginWithGoogle')); // Or something appropriate
       setIsRemoteLoggingIn(false);
       return;
     }
@@ -411,7 +469,7 @@ const App: React.FC = () => {
       const querySnapshot = await getDocs(q);
       
       if (querySnapshot.empty) {
-        throw new Error('এই ইমেইল দিয়ে কোনো ভল্ট পাওয়া যায়নি। নিশ্চিত করুন যে মালিক তার প্রোফাইলে রিমোট অ্যাক্সেস পাসওয়ার্ড সেট করেছেন এবং ইমেইলটি সঠিক।');
+        throw new Error(t('noVaultFound'));
       }
 
       const profileDoc = querySnapshot.docs[0];
@@ -419,18 +477,18 @@ const App: React.FC = () => {
       const targetUid = profileDoc.id;
 
       if (targetUid === user.uid) {
-        throw new Error('আপনি নিজের ভল্ট রিমোটলি অ্যাক্সেস করতে পারবেন না। এটি আপনার ডিভাইসেই আছে।');
+        throw new Error(t('cannotAccessOwnVault'));
       }
 
       if (!profileData.remoteAccessKey) {
-        throw new Error('এই ভল্টে রিমোট অ্যাক্সেস সেট করা নেই। মালিককে পাসওয়ার্ড সেট করতে বলুন।');
+        throw new Error(t('remoteAccessNotSet'));
       }
 
       const storedKey = String(profileData.remoteAccessKey || '').trim();
       const inputKey = String(remoteAccessKeyInput || '').trim();
 
       if (storedKey !== inputKey) {
-        throw new Error('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুল।');
+        throw new Error(t('wrongRemotePassword'));
       }
 
       setRemoteAccess({
@@ -451,10 +509,10 @@ const App: React.FC = () => {
       setActiveFolderId(null);
     } catch (err: any) {
       if (err.code === 'permission-denied') {
-        setError('পারমিশন এরর! ফায়ারবেস সিকিউরিটি রুলস আপডেট করা নেই।');
+        setError(t('permissionError'));
         setShowRulesGuide(true);
       } else {
-        setError(err.message || 'রিমোট ভল্ট অ্যাক্সেস করতে সমস্যা হয়েছে।');
+        setError(err.message || t('remoteVault')); // Or something appropriate
       }
       console.error(err);
     } finally {
@@ -475,10 +533,10 @@ const App: React.FC = () => {
         photoURL: user.photoURL
       }, { merge: true });
       setShowRemoteSettings(false);
-      alert('রিমোট অ্যাক্সেস পাসওয়ার্ড সফলভাবে সেট করা হয়েছে।');
+      alert(t('remoteAccessSet'));
     } catch (err) {
       console.error(err);
-      alert('পাসওয়ার্ড সেট করতে সমস্যা হয়েছে।');
+      alert(t('savePassword')); // Error setting password
     } finally {
       setIsSavingRemoteKey(false);
     }
@@ -504,7 +562,7 @@ const App: React.FC = () => {
 
     // Check file size (limit to 700KB for base64 storage in Firestore to stay under 1MB limit)
     if (file.size > 700 * 1024) {
-      alert('ছবিটি ৭০০ কিলোবাইটের চেয়ে ছোট হতে হবে।');
+      alert(t('photoSizeError'));
       return;
     }
 
@@ -536,10 +594,10 @@ const App: React.FC = () => {
           setAuthUser({ ...authUser, photoURL: base64 });
         }
 
-        alert('প্রোফাইল ছবি আপডেট করা হয়েছে।');
+        alert(t('photoUpdated'));
       } catch (err) {
         console.error(err);
-        alert('ছবি আপডেট করতে সমস্যা হয়েছে।');
+        alert(t('photoUpdated')); // Error updating photo
       } finally {
         setIsUpdatingProfile(false);
       }
@@ -585,9 +643,9 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       if (err.code === 'permission-denied') {
-        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Firestore Rules চেক করুন।');
+        alert(t('permissionError'));
       } else {
-        alert('ফোল্ডার সেভ করতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+        alert(t('create') + ': ' + (err.message || 'Unknown error'));
       }
     }
   };
@@ -597,7 +655,7 @@ const App: React.FC = () => {
     if (!file || !activeFolderId || !user) return;
 
     if (file.size > 50 * 1024 * 1024) {
-      alert('ফাইলের সাইজ অনেক বড়! অনুগ্রহ করে ৫০ মেগাবাইট (50 MB) এর নিচের ফাইল আপলোড করুন।');
+      alert(t('fileSizeError'));
       return;
     }
 
@@ -708,9 +766,9 @@ const App: React.FC = () => {
       }
 
       if (err.code === 'permission-denied') {
-        alert('ফায়ারবেস পারমিশন এরর! অনুগ্রহ করে ফায়ারবেস কনসোলে Firestore Rules চেক করুন।');
+        alert(t('permissionError'));
       } else {
-        alert('ফাইল আপলোড করতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+        alert(t('newFile') + ': ' + (err.message || 'Unknown error'));
       }
     } finally {
       setIsUploading(false);
@@ -726,7 +784,7 @@ const App: React.FC = () => {
       setUnlockPassword('');
       setError('');
     } else {
-      setError('ভুল পাসওয়ার্ড! আবার চেষ্টা করুন।');
+      setError(t('wrongPassword'));
     }
   };
 
@@ -739,25 +797,25 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/configuration-not-found') {
-        setAuthError('ফায়ারবেস কনসোলে গুগল লগইন (Google Sign-in) চালু করা নেই। অনুগ্রহ করে Authentication > Sign-in method এ গিয়ে এটি চালু করুন।');
+        setAuthError(t('firebaseAuthErrorGoogle'));
       } else if (err.code === 'auth/unauthorized-domain') {
-        setAuthError(`এই ডোমেইনটি (${window.location.hostname}) ফায়ারবেসে অনুমোদিত নয়। অনুগ্রহ করে ফায়ারবেস কনসোলে Authentication > Settings > Authorized domains এ গিয়ে এই ডোমেইনটি যোগ করুন।`);
+        setAuthError(t('firebaseAuthErrorDomain', { domain: window.location.hostname }));
       } else if (err.code === 'auth/invalid-api-key') {
-        setAuthError('আপনার এপিআই কি (API Key) সঠিক নয়। অনুগ্রহ করে পুনরায় চেক করুন।');
+        setAuthError(t('firebaseAuthErrorApiKey'));
       } else {
-        setAuthError('লগইন করতে সমস্যা হচ্ছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+        setAuthError(t('firebaseAuthErrorGeneral'));
       }
     }
   };
 
   const resetDemoData = () => {
-    if (confirm('আপনি কি সব ডেমো ডেটা মুছে ফেলতে চান?')) {
+    if (confirm(t('confirmDeleteDemo'))) {
       localStorage.removeItem('demo_folders');
       localStorage.removeItem('demo_files');
       setFolders([]);
       setFiles([]);
       setActiveFolderId(null);
-      alert('ডেমো ডেটা সফলভাবে মুছে ফেলা হয়েছে।');
+      alert(t('demoDataDeleted'));
     }
   };
   const handleTestConnection = async () => {
@@ -766,16 +824,16 @@ const App: React.FC = () => {
       const res = await fetch('/api/test-connection', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        alert("অভিনন্দন! আপনার ইমেইল সার্ভার সঠিকভাবে কনফিগার করা হয়েছে। এখন ইমেইল যাবে।");
+        alert(t('serverReady'));
         // Refresh status
         const statusRes = await fetch('/api/config-status');
         const statusData = await statusRes.json();
         setConfigStatus(statusData);
       } else {
-        alert(`ত্রুটি: ${data.error}\n\nপরামর্শ: আপনার App Password সঠিক কি না তা আবার চেক করুন।`);
+        alert(t('appPasswordError', { error: data.error }));
       }
     } catch (err: any) {
-      alert("সার্ভারের সাথে কানেক্ট করা যাচ্ছে না।");
+      alert(t('serverConnectionError'));
     } finally {
       setIsTestingConnection(false);
     }
@@ -804,9 +862,9 @@ const App: React.FC = () => {
         setIsSendingCode(false);
         setRecoveryStep('verify');
         if (data.simulated) {
-          alert(`আপনার ভেরিফিকেশন কোডটি হলো: ${code}\n\n(সার্ভার ত্রুটি: SMTP কনফিগার করা নেই। আপনি যদি আসল ইমেইল পেতে চান, তবে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করুন)`);
+          alert(`${t('verifyCode')}: ${code}\n\n(SMTP not configured)`);
         } else {
-          alert(`একটি ভেরিফিকেশন কোড আপনার ইমেইল (${user.email}) এ পাঠানো হয়েছে। অনুগ্রহ করে স্প্যাম (Spam) ফোল্ডারটিও চেক করুন।`);
+          alert(t('emailSent'));
         }
       } else {
         throw new Error(data.details || data.error || 'Failed to send email');
@@ -815,11 +873,11 @@ const App: React.FC = () => {
       console.error('Error sending recovery email:', err);
       setIsSendingCode(false);
       
-      let errorMessage = 'ইমেইল পাঠাতে সমস্যা হয়েছে।';
+      let errorMessage = t('emailError');
       if (err.message.includes('Invalid login')) {
-        errorMessage = 'আপনার EMAIL_PASS (App Password) সঠিক নয়। অনুগ্রহ করে গুগল থেকে নতুন কোড নিয়ে সেট করুন।';
+        errorMessage = t('serverNotConfigured');
       } else if (err.message.includes('ETIMEDOUT')) {
-        errorMessage = 'সার্ভার কানেকশন টাইমআউট হয়েছে। আবার চেষ্টা করুন।';
+        errorMessage = t('emailError'); // Timeout
       }
       
       setError(errorMessage);
@@ -827,9 +885,9 @@ const App: React.FC = () => {
       // Fallback to simulation for testing if API fails or in demo mode
       if (isDemoMode) {
         setRecoveryStep('verify');
-        alert(`ডেমো মোডে আছেন, তাই ইমেইল পাঠানো হয়নি।\nআপনার ভেরিফিকেশন কোডটি হলো: ${code}`);
+        alert(`${t('verifyCode')}: ${code}`);
       } else {
-        alert(`ত্রুটি: ${err.message}\n\nসিস্টেমটি এখন সিমুলেশন মোডে কোডটি দেখাচ্ছে: ${code}`);
+        alert(`Error: ${err.message}\n\nCode: ${code}`);
         setRecoveryStep('verify');
       }
     }
@@ -840,7 +898,7 @@ const App: React.FC = () => {
       setRecoveryStep('reset');
       setError('');
     } else {
-      setError('ভুল ভেরিফিকেশন কোড!');
+      setError(t('invalidCode'));
     }
   };
 
@@ -863,15 +921,15 @@ const App: React.FC = () => {
       setNewPassword('');
       setUserInputCode('');
       setGeneratedCode('');
-      alert('পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে।');
+      alert(t('passwordChanged'));
     } catch (err) {
       console.error(err);
-      alert('পাসওয়ার্ড পরিবর্তন করতে সমস্যা হয়েছে।');
+      alert(t('passwordChanged')); // Error
     }
   };
 
   const deleteFile = async (id: string) => {
-    if (window.confirm('আপনি কি এই নথিটি মুছে ফেলতে চান?')) {
+    if (window.confirm(t('confirmDeleteFile'))) {
       setIsDeleting(id);
       try {
         if (isDemoMode) {
@@ -918,7 +976,7 @@ const App: React.FC = () => {
         setFiles(prev => prev.filter(f => f.id !== id));
       } catch (err: any) {
         console.error("Delete file error:", err);
-        alert('ফাইলটি মুছতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+        alert(t('delete') + ': ' + (err.message || 'Unknown error'));
       } finally {
         setIsDeleting(null);
       }
@@ -926,7 +984,7 @@ const App: React.FC = () => {
   };
 
   const deleteFolder = async (id: string) => {
-    if (window.confirm('এই ফোল্ডারটি মুছলে এর ভেতরের সব ফাইলও মুছে যাবে। আপনি কি নিশ্চিত?')) {
+    if (window.confirm(t('confirmDeleteFolder'))) {
       setIsDeleting(id);
       try {
         setUnlockedFolderIds(unlockedFolderIds.filter(fid => fid !== id));
@@ -984,7 +1042,7 @@ const App: React.FC = () => {
         setFiles(prev => prev.filter(f => f.folderId !== id));
       } catch (err: any) {
         console.error("Delete folder error:", err);
-        alert('ফোল্ডারটি মুছতে সমস্যা হয়েছে: ' + (err.message || 'Unknown error'));
+        alert(t('delete') + ': ' + (err.message || 'Unknown error'));
       } finally {
         setIsDeleting(null);
       }
@@ -1008,7 +1066,7 @@ const App: React.FC = () => {
       setEditingFileId(null);
     } catch (err) {
       console.error(err);
-      alert('নাম পরিবর্তন করতে সমস্যা হয়েছে।');
+      alert(t('rename')); // Error
       // Revert local state on error if needed, but onSnapshot will eventually sync anyway
     }
   };
@@ -1026,16 +1084,36 @@ const App: React.FC = () => {
       setEditingFolderId(null);
     } catch (err) {
       console.error(err);
-      alert('ফোল্ডারের নাম পরিবর্তন করতে সমস্যা হয়েছে।');
+      alert(t('rename')); // Error
+    }
+  };
+
+  const moveFile = async (fileId: string, targetFolderId: string) => {
+    if (!fileId || !targetFolderId) return;
+    
+    try {
+      if (isDemoMode) {
+        setFiles(files.map(f => f.id === fileId ? { ...f, folderId: targetFolderId } : f));
+        setMovingFile(null);
+        return;
+      }
+      
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      await updateDoc(doc(db, 'files', fileId), { folderId: targetFolderId });
+      setMovingFile(null);
+      alert(t('fileMoved'));
+    } catch (err) {
+      console.error(err);
+      alert(t('moveError'));
     }
   };
 
   const removeFolderLock = async (folder: Folder) => {
-    const pass = window.prompt('পাসওয়ার্ডটি মুছতে বর্তমান পাসওয়ার্ডটি দিন:');
+    const pass = window.prompt(t('enterCurrentPassword'));
     if (!pass) return;
     
     if (pass !== folder.password) {
-      alert('ভুল পাসওয়ার্ড!');
+      alert(t('wrongPassword'));
       return;
     }
 
@@ -1048,7 +1126,7 @@ const App: React.FC = () => {
       await updateDoc(doc(db, 'folders', folder.id), { password: '', isLocked: false });
     } catch (err) {
       console.error(err);
-      alert('পাসওয়ার্ড মুছতে সমস্যা হয়েছে।');
+      alert(t('deletePasswordError'));
     }
   };
 
@@ -1080,7 +1158,7 @@ const App: React.FC = () => {
       setFolderPassword('');
     } catch (err) {
       console.error(err);
-      alert('লক করতে সমস্যা হয়েছে।');
+      alert(t('lockError'));
     }
   };
 
@@ -1100,11 +1178,11 @@ const App: React.FC = () => {
         
         if (chunksSnapshot.empty) {
           console.error("No chunks found in Firestore for file ID:", file.id);
-          if (!remoteAccess.isActive && window.confirm('এই ফাইলটির কোনো ডেটা খুঁজে পাওয়া যায়নি। সম্ভবত এটি সঠিকভাবে আপলোড হয়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+          if (!remoteAccess.isActive && window.confirm(t('fileDataNotFoundError'))) {
             await deleteDoc(doc(db, 'files', file.id));
             setFiles(files.filter(f => f.id !== file.id));
           } else if (remoteAccess.isActive) {
-            alert('এই ফাইলটির ডেটা খুঁজে পাওয়া যায়নি। এটি লোড করা সম্ভব হচ্ছে না।');
+            alert(t('fileLoadError'));
           }
           setIsUploading(false);
           return;
@@ -1125,7 +1203,7 @@ const App: React.FC = () => {
         console.log("File reconstructed successfully. Total length:", dataUrl.length);
       } catch (err: any) {
         console.error("Download error details:", err);
-        alert('ফাইলটি ডাউনলোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি বা ডেটাবেস থেকে মুছে গেছে।');
+        alert(t('fileDownloadError'));
         setIsUploading(false);
         return;
       } finally {
@@ -1134,7 +1212,7 @@ const App: React.FC = () => {
     }
 
     if (!dataUrl || dataUrl === 'CHUNKED') {
-      alert('ফাইলের ডেটা পাওয়া যায়নি।');
+      alert(t('fileDataNotFound'));
       return;
     }
 
@@ -1147,7 +1225,7 @@ const App: React.FC = () => {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Link trigger error:", err);
-      alert('ডাউনলোড শুরু করতে সমস্যা হয়েছে।');
+      alert(t('downloadStartError'));
     }
   };
 
@@ -1165,11 +1243,11 @@ const App: React.FC = () => {
         
         if (chunksSnapshot.empty) {
           console.error("No chunks found in Firestore for preview. File ID:", file.id);
-          if (!remoteAccess.isActive && window.confirm('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না কারণ এর কোনো ডেটা খুঁজে পাওয়া যায়নি। আপনি কি এই অকেজো ফাইলটি তালিকা থেকে মুছে ফেলতে চান?')) {
+          if (!remoteAccess.isActive && window.confirm(t('previewLoadErrorConfirm'))) {
             await deleteDoc(doc(db, 'files', file.id));
             setFiles(files.filter(f => f.id !== file.id));
           } else if (remoteAccess.isActive) {
-            alert('এই ফাইলটির প্রিভিউ লোড করা যাচ্ছে না। ডেটা পাওয়া যায়নি।');
+            alert(t('previewLoadError'));
           }
           setIsPreviewLoading(false);
           return;
@@ -1192,13 +1270,13 @@ const App: React.FC = () => {
         console.log("Preview reconstructed successfully. Total length:", fullBase64.length);
       } catch (err: any) {
         console.error("Preview error details:", err);
-        alert('প্রিভিউ লোড করতে সমস্যা হয়েছে। সম্ভবত ফাইলটি সঠিকভাবে আপলোড হয়নি।');
+        alert(t('previewLoadGeneralError'));
       } finally {
         setIsPreviewLoading(false);
       }
     } else {
       if (file.dataUrl === 'CHUNKED') {
-        alert('এই ফাইলটির ডেটা পাওয়া যাচ্ছে না।');
+        alert(t('fileDataMissing'));
         return;
       }
       setShowPreview(file);
@@ -1261,7 +1339,7 @@ const App: React.FC = () => {
         // The UI will now show a "Ready" state for this file.
       } catch (err) {
         console.error("Prepare share error:", err);
-        alert('ফাইলটি প্রস্তুত করতে সমস্যা হয়েছে।');
+        alert(t('filePrepareError'));
       } finally {
         setPreparingFileId(null);
       }
@@ -1273,7 +1351,7 @@ const App: React.FC = () => {
     try {
       const dataUrl = file.dataUrl;
       if (!dataUrl || dataUrl === 'CHUNKED') {
-        alert('ফাইলটি শেয়ার করার জন্য প্রস্তুত নয়।');
+        alert(t('fileNotReadyShare'));
         setIsSharing(false);
         return;
       }
@@ -1302,7 +1380,7 @@ const App: React.FC = () => {
         const shareData: ShareData = {
           files: [shareFile],
           title: fileName,
-          text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${fileName}`,
+          text: t('shareText') + fileName,
         };
 
         if (navigator.canShare && navigator.canShare(shareData)) {
@@ -1310,21 +1388,18 @@ const App: React.FC = () => {
         } else {
           await navigator.share({
             title: file.name,
-            text: `সুরক্ষিত নথি ভল্ট থেকে শেয়ার করা ফাইল: ${file.name}`,
+            text: t('shareText') + file.name,
           });
         }
       } else {
-        alert('আপনার ব্রাউজার সরাসরি শেয়ার সাপোর্ট করে না।');
+        alert(t('shareNotSupported'));
       }
     } catch (err: any) {
       console.error('Sharing failed:', err);
       if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
-        alert(
-          'শেয়ার করার অনুমতি পাওয়া যায়নি।\n\n' +
-          'সমাধান: উপরে ডানদিকের তিনটি ডটে ক্লিক করে "Open in Chrome" সিলেক্ট করুন অথবা ফাইলটি ডাউনলোড করে শেয়ার করুন।'
-        );
+        alert(t('sharePermissionError'));
       } else if (err.name !== 'AbortError' && !err.message?.includes('already completed')) {
-        alert('শেয়ার করতে সমস্যা হয়েছে।');
+        alert(t('shareError'));
       }
     } finally {
       setIsSharing(false);
@@ -1447,7 +1522,7 @@ const App: React.FC = () => {
                 onClick={() => setIsDemoMode(true)}
                 className="mt-3 text-[10px] text-indigo-600 font-bold hover:underline"
               >
-                এরর এড়িয়ে ডেমো মোড ব্যবহার করুন →
+                {t('tryDemoMode')}
               </button>
             </div>
           )}
@@ -1456,7 +1531,7 @@ const App: React.FC = () => {
             onClick={() => setIsDemoMode(true)}
             className="mt-6 text-sm text-indigo-600 font-bold hover:underline"
           >
-            লগইন ছাড়াই ডেমো দেখুন
+            {t('viewDemoWithoutLogin')}
           </button>
           
           <p className="mt-8 text-[11px] text-slate-400 uppercase tracking-widest font-semibold">
@@ -1491,13 +1566,13 @@ const App: React.FC = () => {
                 <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-4">
                   <ExternalLink className="w-8 h-8 text-indigo-600" />
                 </div>
-                <h3 className="text-2xl font-bold text-slate-900">রিমোট ভল্ট অ্যাক্সেস</h3>
-                <p className="text-slate-500 mt-2">অন্য ডিভাইসের ডকুমেন্ট অ্যাক্সেস করতে জিমেইল আইডি ও পাসওয়ার্ড দিন।</p>
+                <h3 className="text-2xl font-bold text-slate-900">{t('remoteVaultAccess')}</h3>
+                <p className="text-slate-500 mt-2">{t('remoteVaultAccessDesc')}</p>
               </div>
 
               <form onSubmit={handleRemoteLogin} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">জিমেইল আইডি</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{t('gmailId')}</label>
                   <div className="relative">
                     <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
@@ -1512,13 +1587,13 @@ const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{t('remoteAccessPassword')}</label>
                   <div className="relative">
                     <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
                       type={showRemoteAccessKeyInput ? "text" : "password"} 
                       required
-                      placeholder="মালিকের সেট করা পাসওয়ার্ড দিন"
+                      placeholder={t('enterOwnerPassword')}
                       value={remoteAccessKeyInput}
                       onChange={(e) => setRemoteAccessKeyInput(e.target.value)}
                       className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
@@ -1543,10 +1618,10 @@ const App: React.FC = () => {
                 <div className="flex justify-end">
                   <button 
                     type="button"
-                    onClick={() => alert('রিমোট অ্যাক্সেস পাসওয়ার্ড ভুলে গেলে ভল্টের মালিকের সাথে যোগাযোগ করুন। মালিক তার প্রোফাইল সেটিংস থেকে এটি রিসেট করতে পারবেন।')}
+                    onClick={() => alert(t('forgotRemotePasswordAlert'))}
                     className="text-xs text-indigo-600 font-bold hover:underline"
                   >
-                    পাসওয়ার্ড ভুলে গেছেন?
+                    {t('forgotPassword')}
                   </button>
                 </div>
 
@@ -1558,10 +1633,10 @@ const App: React.FC = () => {
                   {isRemoteLoggingIn ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      অ্যাক্সেস করা হচ্ছে...
+                      {t('accessing')}...
                     </>
                   ) : (
-                    'অ্যাক্সেস করুন'
+                    t('access')
                   )}
                 </button>
 
@@ -1575,7 +1650,7 @@ const App: React.FC = () => {
                   }}
                   className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
                 >
-                  বাতিল
+                  {t('cancel')}
                 </button>
               </form>
             </motion.div>
@@ -1597,8 +1672,8 @@ const App: React.FC = () => {
                 <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-4">
                   <ShieldCheck className="w-8 h-8 text-indigo-600" />
                 </div>
-                <h3 className="text-2xl font-bold text-slate-900">রিমোট অ্যাক্সেস সেটিংস</h3>
-                <p className="text-slate-500 mt-2">অন্য কেউ আপনার ভল্ট অ্যাক্সেস করতে চাইলে এই পাসওয়ার্ডটি প্রয়োজন হবে।</p>
+                <h3 className="text-2xl font-bold text-slate-900">{t('remoteAccessSettings')}</h3>
+                <p className="text-slate-500 mt-2">{t('remoteSettingsDescription')}</p>
               </div>
 
               <form onSubmit={handleSaveRemoteKey} className="space-y-6">
@@ -1609,7 +1684,7 @@ const App: React.FC = () => {
                         <UserIcon className="w-5 h-5 text-emerald-600" />
                       </div>
                       <div>
-                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">বর্তমানে অ্যাক্সেস করা ভল্ট</p>
+                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">{t('currentVault')}</p>
                         <p className="text-sm font-bold text-slate-900">{remoteAccess.user.email}</p>
                       </div>
                     </div>
@@ -1618,7 +1693,7 @@ const App: React.FC = () => {
                       onClick={handleExitRemoteAccess}
                       className="w-full py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-all"
                     >
-                      রিমোট অ্যাক্সেস বন্ধ করুন
+                      {t('stopRemoteAccess')}
                     </button>
                   </div>
                 )}
@@ -1630,8 +1705,8 @@ const App: React.FC = () => {
                         <ExternalLink className="w-5 h-5 text-indigo-600" />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-900">অন্য ভল্ট অ্যাক্সেস করুন</p>
-                        <p className="text-[10px] text-slate-500">অন্যের ডকুমেন্ট দেখতে এখানে ক্লিক করুন</p>
+                        <p className="text-sm font-bold text-slate-900">{t('accessOtherVault')}</p>
+                        <p className="text-[10px] text-slate-500">{t('accessOtherVaultDesc')}</p>
                       </div>
                     </div>
                     <button 
@@ -1642,7 +1717,7 @@ const App: React.FC = () => {
                       }}
                       className="w-full py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all"
                     >
-                      রিমোট ভল্ট অ্যাক্সেস
+                      {t('remoteVaultAccess')}
                     </button>
                   </div>
                 )}
@@ -1650,13 +1725,13 @@ const App: React.FC = () => {
                 <div className="h-px bg-slate-100 my-4" />
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">আপনার রিমোট অ্যাক্সেস পাসওয়ার্ড</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{t('remoteAccessPassword')}</label>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
                       type={showRemoteAccessKey ? "text" : "password"} 
                       required
-                      placeholder="নতুন পাসওয়ার্ড দিন"
+                      placeholder={t('enterNewPassword')}
                       value={remoteAccessKey}
                       onChange={(e) => setRemoteAccessKey(e.target.value)}
                       className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
@@ -1673,7 +1748,7 @@ const App: React.FC = () => {
 
                 <div className="p-4 bg-indigo-50 rounded-2xl">
                   <p className="text-[11px] text-indigo-600 leading-relaxed">
-                    <span className="font-bold">সুরক্ষা টিপস:</span> এই পাসওয়ার্ডটি আপনার জিমেইল পাসওয়ার্ড থেকে আলাদা হওয়া উচিত। এটি শুধুমাত্র রিমোট অ্যাক্সেসের জন্য ব্যবহৃত হবে।
+                    <span className="font-bold">{t('securityTip')}:</span> {t('securityTipDesc')}
                   </p>
                 </div>
 
@@ -1685,10 +1760,10 @@ const App: React.FC = () => {
                   {isSavingRemoteKey ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      সেভ করা হচ্ছে...
+                      {t('saving')}...
                     </>
                   ) : (
-                    'পাসওয়ার্ড সেভ করুন'
+                    t('savePassword')
                   )}
                 </button>
 
@@ -1697,7 +1772,7 @@ const App: React.FC = () => {
                   onClick={() => setShowRemoteSettings(false)}
                   className="w-full py-4 text-slate-400 font-bold hover:text-slate-600 transition-all"
                 >
-                  বাতিল
+                  {t('cancel')}
                 </button>
               </form>
             </motion.div>
@@ -1721,13 +1796,13 @@ const App: React.FC = () => {
                 onClick={() => setShowRulesGuide(true)}
                 className="ml-4 underline hover:no-underline font-bold"
               >
-                কিভাবে সমাধান করবেন?
+                {t('howToFix')}
               </button>
               <button 
                 onClick={() => setPermissionError(null)}
                 className="ml-4 opacity-70 hover:opacity-100"
               >
-                Dismiss
+                {t('close')}
               </button>
             </div>
           </motion.div>
@@ -1749,7 +1824,7 @@ const App: React.FC = () => {
                   <div className="p-2 bg-indigo-100 rounded-xl">
                     <Shield className="w-6 h-6 text-indigo-600" />
                   </div>
-                  <h3 className="text-xl font-bold text-slate-900">Firestore পারমিশন সমাধান</h3>
+                  <h3 className="text-xl font-bold text-slate-900">{t('firestoreRulesTitle')}</h3>
                 </div>
                 <button onClick={() => setShowRulesGuide(false)} className="p-2 hover:bg-slate-100 rounded-full transition-all">
                   <X className="w-6 h-6 text-slate-400" />
@@ -1759,18 +1834,18 @@ const App: React.FC = () => {
               <div className="space-y-6">
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl">
                   <p className="text-sm text-amber-800 leading-relaxed">
-                    "Missing or insufficient permissions" এররটি সাধারণত ফায়ারবেস সিকিউরিটি রুলস এর কারণে হয়। রিমোট অ্যাক্সেস কাজ করার জন্য আপনাকে নিচের রুলসগুলো ফায়ারবেস কনসোলে আপডেট করতে হবে।
+                    {t('rulesErrorDesc')}
                   </p>
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="font-bold text-slate-800">ধাপসমূহ:</h4>
+                  <h4 className="font-bold text-slate-800">{t('steps')}:</h4>
                   <ol className="list-decimal list-inside text-sm text-slate-600 space-y-2 ml-2">
-                    <li>Firebase Console এ যান।</li>
-                    <li>বাম পাশের মেনু থেকে <span className="font-bold">Firestore Database</span> এ ক্লিক করুন।</li>
-                    <li>উপরে থাকা <span className="font-bold">Rules</span> ট্যাবে ক্লিক করুন।</li>
-                    <li><span className="text-red-600 font-bold">গুরুত্বপূর্ণ:</span> এডিটর-এ থাকা আগের সব কোড মুছে ফেলুন (Select All and Delete)।</li>
-                    <li>নিচের কোডটি কপি করে সেখানে পেস্ট করুন এবং <span className="font-bold">Publish</span> এ ক্লিক করুন।</li>
+                    <li>{t('step1')}</li>
+                    <li>{t('step2')}</li>
+                    <li>{t('step3')}</li>
+                    <li>{t('step4')}</li>
+                    <li>{t('step5')}</li>
                   </ol>
                 </div>
 
@@ -1811,11 +1886,11 @@ service cloud.firestore {
   }
 }`;
                         navigator.clipboard.writeText(code);
-                        alert('কোড কপি করা হয়েছে!');
+                        alert(t('rulesCopied'));
                       }}
                       className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg shadow-lg"
                     >
-                      Copy Code
+                      {t('copyCode')}
                     </button>
                   </div>
                   <pre className="bg-slate-900 text-slate-300 p-6 rounded-2xl text-xs overflow-x-auto font-mono leading-relaxed">
@@ -1882,7 +1957,7 @@ service cloud.firestore {
                 <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
                 <div className="absolute left-0 top-full mt-2 w-56 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 py-2 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                   <div className="px-4 py-2 border-b border-slate-700/50 mb-1">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">অ্যাকাউন্ট</p>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{t('account')}</p>
                     <p className="text-xs text-slate-300 truncate">{user.email}</p>
                   </div>
                   
@@ -1895,7 +1970,7 @@ service cloud.firestore {
                     className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
                   >
                     <Pencil className="w-4 h-4" />
-                    নাম পরিবর্তন করুন
+                    {t('changeName')}
                   </button>
 
                   <button 
@@ -1906,7 +1981,7 @@ service cloud.firestore {
                     className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
                   >
                     <Camera className="w-4 h-4" />
-                    ছবি পরিবর্তন করুন
+                    {t('changePhoto')}
                   </button>
 
                   <button 
@@ -1917,7 +1992,7 @@ service cloud.firestore {
                     className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
                   >
                     <ShieldCheck className="w-4 h-4" />
-                    রিমোট অ্যাক্সেস সেটিংস
+                    {t('remoteSettings')}
                   </button>
 
                   <div className="h-px bg-slate-700/50 my-1" />
@@ -1938,13 +2013,20 @@ service cloud.firestore {
                     className="w-full flex items-center gap-3 px-4 py-3 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
                   >
                     <LogOut className="w-4 h-4" />
-                    লগ আউট করুন
+                    {t('logout')}
                   </button>
                 </div>
               </>
             )}
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={toggleLanguage}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded-lg uppercase tracking-wider transition-all border border-slate-700"
+              >
+                <Languages className="w-3.5 h-3.5" />
+                {language === 'bn' ? 'English' : 'বাংলা'}
+              </button>
               {isDemoMode && (
                 <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider">Demo</span>
               )}
@@ -1956,13 +2038,13 @@ service cloud.firestore {
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">রিমোট ভল্ট</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">{t('remoteVault')}</span>
               </div>
               <button 
                 onClick={handleExitRemoteAccess}
                 className="text-[10px] bg-indigo-500 hover:bg-indigo-400 px-2 py-0.5 rounded transition-colors"
               >
-                বন্ধ করুন
+                {t('close')}
               </button>
             </div>
             <p className="text-xs text-slate-300 truncate font-medium">{remoteAccess.user?.email}</p>
@@ -1972,7 +2054,7 @@ service cloud.firestore {
         <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <p className="text-[11px] uppercase text-slate-500 font-bold tracking-wider">আপনার ফোল্ডার</p>
+              <p className="text-[11px] uppercase text-slate-500 font-bold tracking-wider">{t('yourFolders')}</p>
               {!remoteAccess.isActive && (
                 <button 
                   onClick={() => setShowAddFolder(true)}
@@ -1985,7 +2067,7 @@ service cloud.firestore {
             
             <div className="space-y-1">
               {folders.length === 0 && (
-                <p className="text-xs text-slate-500 italic px-2">কোনো ফোল্ডার নেই</p>
+                <p className="text-xs text-slate-500 italic px-2">{t('noFolders')}</p>
               )}
               {folders.map((folder) => {
                 const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
@@ -2063,7 +2145,7 @@ service cloud.firestore {
                                     }}
                                     className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                                   >
-                                    <Pencil className="w-3.5 h-3.5" /> নাম পরিবর্তন
+                                    <Pencil className="w-3.5 h-3.5" /> {t('rename')}
                                   </button>
                                   
                                   {folder.password ? (
@@ -2074,7 +2156,7 @@ service cloud.firestore {
                                       }}
                                       className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-amber-400 hover:bg-slate-700 transition-colors"
                                     >
-                                      <Unlock className="w-3.5 h-3.5" /> লক মুছুন
+                                      <Unlock className="w-3.5 h-3.5" /> {t('removeLock')}
                                     </button>
                                   ) : (
                                     <button 
@@ -2084,7 +2166,7 @@ service cloud.firestore {
                                       }}
                                       className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-indigo-400 hover:bg-slate-700 transition-colors"
                                     >
-                                      <Lock className="w-3.5 h-3.5" /> লক করুন
+                                      <Lock className="w-3.5 h-3.5" /> {t('lock')}
                                     </button>
                                   )}
                                   
@@ -2103,7 +2185,7 @@ service cloud.firestore {
                                     ) : (
                                       <Trash2 className="w-3.5 h-3.5" />
                                     )}
-                                    মুছুন
+                                    {t('delete')}
                                   </button>
                                 </div>
                               </>
@@ -2125,7 +2207,7 @@ service cloud.firestore {
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2">
                 <Info className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                 <p className="text-[10px] text-amber-200/70 leading-tight">
-                  আপনি ডেমো মোডে আছেন। ডেটা শুধুমাত্র আপনার ব্রাউজারে সেভ হবে। ক্লাউড সিঙ্ক করতে ফায়ারবেস সেটআপ করুন।
+                  {t('demoModeDesc')}
                 </p>
               </div>
               <button 
@@ -2133,7 +2215,7 @@ service cloud.firestore {
                 className="w-full py-2 px-3 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 text-[10px] font-bold rounded-xl transition-all flex items-center justify-center gap-2"
               >
                 <Trash2 className="w-3 h-3" />
-                ডেমো ডেটা রিসেট করুন
+                {t('resetDemoData')}
               </button>
             </div>
           )}
@@ -2148,7 +2230,7 @@ service cloud.firestore {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input 
               type="text" 
-              placeholder="ফাইল খুঁজুন..." 
+              placeholder={t('searchFiles')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-slate-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all"
@@ -2161,7 +2243,7 @@ service cloud.firestore {
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100"
             >
               <FilePlus className="w-4 h-4" />
-              নতুন ফাইল
+              {t('newFile')}
             </button>
           )}
         </header>
@@ -2178,19 +2260,19 @@ service cloud.firestore {
                 )}
               </div>
               <h2 className="text-2xl font-bold text-slate-800 mb-2 tracking-tight">
-                {isCurrentFolderLocked ? 'ফোল্ডারটি লক করা আছে' : 'শুরু করতে একটি ফোল্ডার বেছে নিন'}
+                {isCurrentFolderLocked ? t('folderLocked') : t('selectFolder')}
               </h2>
               <p className="text-slate-500 max-w-sm">
                 {isCurrentFolderLocked 
-                  ? 'ফাইলগুলো দেখতে বাম পাশের মেনু থেকে ফোল্ডারটি আনলক করুন।' 
-                  : 'বামে থাকা প্যানেল থেকে একটি ফোল্ডার সিলেক্ট করুন অথবা নতুন ফোল্ডার তৈরি করুন।'}
+                  ? t('unlockToView')
+                  : t('selectFolderDesc')}
               </p>
               {isCurrentFolderLocked && (
                 <button 
                   onClick={() => setShowUnlock(currentFolder)}
                   className="mt-6 px-8 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
                 >
-                  আনলক করুন
+                  {t('unlock')}
                 </button>
               )}
             </div>
@@ -2199,7 +2281,7 @@ service cloud.firestore {
               <div className="flex items-center gap-3 mb-8">
                 <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{currentFolder?.name}</h2>
                 <span className="px-3 py-1 bg-slate-200 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                  {filteredFiles.length} টি ফাইল
+                  {filteredFiles.length} {t('files')}
                 </span>
               </div>
 
@@ -2208,12 +2290,12 @@ service cloud.firestore {
                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
                     <FileIcon className="w-8 h-8 text-slate-300" />
                   </div>
-                  <p className="text-slate-400 font-medium">এই ফোল্ডারে কোনো ফাইল নেই</p>
+                  <p className="text-slate-400 font-medium">{t('noFiles')}</p>
                   <button 
                     onClick={() => setShowUpload(true)}
                     className="mt-4 text-indigo-600 font-bold text-sm hover:underline"
                   >
-                    প্রথম ফাইলটি আপলোড করুন
+                    {t('uploadFirst')}
                   </button>
                 </div>
               ) : (
@@ -2245,9 +2327,18 @@ service cloud.firestore {
                             <button 
                               onClick={() => handlePreview(file)}
                               className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                              title="প্রিভিউ দেখুন"
+                              title={t('preview')}
                             >
                               <Eye className="w-4 h-4" />
+                            </button>
+                          )}
+                          {!remoteAccess.isActive && (
+                            <button 
+                              onClick={() => setMovingFile(file)}
+                              className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                              title={t('move')}
+                            >
+                              <ArrowRightLeft className="w-4 h-4" />
                             </button>
                           )}
                           <button 
@@ -2260,7 +2351,7 @@ service cloud.firestore {
                                   ? "text-emerald-500 bg-emerald-50" 
                                   : "text-slate-300 hover:text-blue-500 hover:bg-blue-50"
                             )}
-                            title={file.dataUrl !== 'CHUNKED' ? "শেয়ার করতে ক্লিক করুন" : "শেয়ার করার জন্য প্রস্তুত করুন"}
+                            title={file.dataUrl !== 'CHUNKED' ? t('share') : t('preparing')}
                           >
                             {preparingFileId === file.id ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
@@ -2278,7 +2369,7 @@ service cloud.firestore {
                                   setEditingFileName(file.name);
                                 }}
                                 className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                                title="নাম পরিবর্তন করুন"
+                                title={t('rename')}
                               >
                                 <Pencil className="w-4 h-4" />
                               </button>
@@ -2345,13 +2436,37 @@ service cloud.firestore {
                         <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">{file.size} • {file.uploadDate}</p>
                       </div>
 
-                      <div className="mt-auto pt-2">
+                      {fileSummaries[file.id] && (
+                        <div className="mb-4 p-3 bg-indigo-50 rounded-2xl border border-indigo-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Sparkles className="w-3 h-3 text-indigo-600" />
+                            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">{t('aiSummary')}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 leading-relaxed italic">
+                            "{fileSummaries[file.id]}"
+                          </p>
+                        </div>
+                      )}
+                      
+                      <div className="mt-auto pt-2 flex gap-2">
+                        <button 
+                          onClick={() => handleSummarize(file)}
+                          disabled={summarizingId === file.id}
+                          className="flex-1 bg-indigo-50 text-indigo-600 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {summarizingId === file.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5" />
+                          )}
+                          {summarizingId === file.id ? t('summarizing') : t('summarize')}
+                        </button>
                         <button 
                           onClick={() => downloadFile(file)}
-                          className="w-full bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
+                          className="flex-1 bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          ডাউনলোড
+                          {t('download')}
                         </button>
                       </div>
                     </motion.div>
@@ -2391,7 +2506,7 @@ service cloud.firestore {
             >
               <div className="p-8">
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">প্রোফাইল এডিট</h2>
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{t('editProfile')}</h2>
                   <button onClick={() => setShowProfileEdit(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
                     <X className="w-6 h-6 text-slate-400" />
                   </button>
@@ -2399,14 +2514,14 @@ service cloud.firestore {
 
                 <form onSubmit={handleUpdateProfile} className="space-y-6">
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">আপনার নাম</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">{t('yourName')}</label>
                     <div className="relative">
                       <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                       <input 
                         type="text"
                         value={newDisplayName}
                         onChange={(e) => setNewDisplayName(e.target.value)}
-                        placeholder="আপনার নাম লিখুন"
+                        placeholder={t('yourName')}
                         className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 focus:ring-0 outline-none transition-all font-medium"
                         autoFocus
                       />
@@ -2419,7 +2534,7 @@ service cloud.firestore {
                       onClick={() => setShowProfileEdit(false)}
                       className="flex-1 py-4 px-6 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
                     >
-                      বাতিল
+                      {t('cancel')}
                     </button>
                     <button 
                       type="submit"
@@ -2427,10 +2542,85 @@ service cloud.firestore {
                       className="flex-1 py-4 px-6 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {isUpdatingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                      সেভ করুন
+                      {t('save')}
                     </button>
                   </div>
                 </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Move File Modal */}
+      <AnimatePresence>
+        {movingFile && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setMovingFile(null)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[32px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{t('move')}</h2>
+                    <p className="text-sm text-slate-500 mt-1">"{movingFile.name}" {t('moveFileDesc')}</p>
+                  </div>
+                  <button onClick={() => setMovingFile(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                    <X className="w-6 h-6 text-slate-400" />
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {folders.length === 0 ? (
+                    <div className="text-center py-8 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                      <p className="text-sm text-slate-500">{t('noFolders')}</p>
+                    </div>
+                  ) : (
+                    folders.map(folder => (
+                      <button
+                        key={folder.id}
+                        onClick={() => moveFile(movingFile.id, folder.id)}
+                        disabled={folder.id === movingFile.folderId}
+                        className={cn(
+                          "w-full flex items-center gap-4 p-4 rounded-2xl transition-all border-2 text-left",
+                          folder.id === movingFile.folderId
+                            ? "bg-slate-50 border-slate-100 opacity-50 cursor-not-allowed"
+                            : "bg-white border-transparent hover:border-indigo-500 hover:bg-indigo-50/30"
+                        )}
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-xl">
+                          {folder.icon || '📁'}
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                          <p className="font-bold text-slate-800 truncate">{folder.name}</p>
+                          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                            {folder.id === movingFile.folderId ? t('currentFolder') : t('moveToHere')}
+                          </p>
+                        </div>
+                        {folder.isLocked && <Lock className="w-4 h-4 text-amber-500" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-8">
+                  <button 
+                    onClick={() => setMovingFile(null)}
+                    className="w-full py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    {t('cancel')}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -2448,13 +2638,13 @@ service cloud.firestore {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white w-full max-w-sm p-8 rounded-[32px] shadow-2xl"
             >
-              <h3 className="text-xl font-bold text-slate-900 mb-6">নতুন ফোল্ডার তৈরি করুন</h3>
+              <h3 className="text-xl font-bold text-slate-900 mb-6">{t('newFolder')}</h3>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2 tracking-widest">ফোল্ডারের নাম</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2 tracking-widest">{t('folderName')}</label>
                   <input 
                     type="text" 
-                    placeholder="যেমন: ব্যক্তিগত নথি" 
+                    placeholder={t('folderName')}
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
                     className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
@@ -2462,12 +2652,12 @@ service cloud.firestore {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2 tracking-widest">পাসওয়ার্ড (ঐচ্ছিক)</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2 tracking-widest">{t('password')} ({t('optional')})</label>
                   <div className="relative">
                     <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input 
                       type="password" 
-                      placeholder="পাসওয়ার্ড দিন..." 
+                      placeholder={t('password')}
                       value={folderPassword}
                       onChange={(e) => setFolderPassword(e.target.value)}
                       className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all"
@@ -2480,13 +2670,13 @@ service cloud.firestore {
                   onClick={() => setShowAddFolder(false)}
                   className="flex-1 py-3 text-slate-500 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
                 >
-                  বাতিল
+                  {t('cancel')}
                 </button>
                 <button 
                   onClick={handleAddFolder}
                   className="flex-1 py-3 bg-indigo-600 text-white font-bold text-sm rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
                 >
-                  তৈরি করুন
+                  {t('create')}
                 </button>
               </div>
             </motion.div>
@@ -2506,17 +2696,17 @@ service cloud.firestore {
                 <div className="p-3 bg-indigo-50 rounded-2xl">
                   <Lock className="w-6 h-6 text-indigo-600" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900">ফোল্ডার লক করুন</h3>
+                <h3 className="text-xl font-bold text-slate-900">{t('lockFolder')}</h3>
               </div>
               
-              <p className="text-sm text-slate-500 mb-6 font-medium">"{showLockFolder.name}" ফোল্ডারটির জন্য একটি পাসওয়ার্ড দিন।</p>
+              <p className="text-sm text-slate-500 mb-6 font-medium">"{showLockFolder.name}" {t('lockFolderDesc')}</p>
               
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase text-slate-400 font-bold tracking-wider ml-1">পাসওয়ার্ড</label>
+                  <label className="text-[10px] uppercase text-slate-400 font-bold tracking-wider ml-1">{t('password')}</label>
                   <input 
                     type="password" 
-                    placeholder="পাসওয়ার্ড দিন" 
+                    placeholder={t('password')}
                     value={folderPassword}
                     onChange={(e) => setFolderPassword(e.target.value)}
                     className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-indigo-500 outline-none transition-all text-center tracking-widest"
@@ -2529,14 +2719,14 @@ service cloud.firestore {
                     onClick={() => { setShowLockFolder(null); setFolderPassword(''); }}
                     className="flex-1 py-3 text-slate-500 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-all"
                   >
-                    বাতিল
+                    {t('cancel')}
                   </button>
                   <button 
                     onClick={handleSetFolderLock}
                     disabled={!folderPassword}
                     className="flex-1 py-3 bg-indigo-600 text-white font-bold text-sm rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50"
                   >
-                    লক করুন
+                    {t('lock')}
                   </button>
                 </div>
               </div>
@@ -2557,7 +2747,7 @@ service cloud.firestore {
                 <div className="p-3 bg-indigo-50 rounded-2xl">
                   <FilePlus className="w-6 h-6 text-indigo-600" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-900">ফাইল আপলোড করুন</h3>
+                <h3 className="text-xl font-bold text-slate-900">{t('uploadFile')}</h3>
               </div>
               
               <div className="space-y-6">
@@ -2569,15 +2759,15 @@ service cloud.firestore {
                   <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
                     <Plus className="w-6 h-6 text-indigo-600" />
                   </div>
-                  <p className="text-sm font-bold text-slate-700">ফাইল সিলেক্ট করুন</p>
-                  <p className="text-xs text-slate-400 mt-1">অথবা এখানে ড্র্যাগ করুন</p>
+                  <p className="text-sm font-bold text-slate-700">{t('clickToUpload')}</p>
+                  <p className="text-xs text-slate-400 mt-1">{t('dragAndDrop')}</p>
                 </div>
 
                 <button 
                   onClick={() => setShowUpload(false)}
                   className="w-full py-3 text-slate-400 font-bold text-sm hover:text-slate-600 transition-all"
                 >
-                  বন্ধ করুন
+                  {t('close')}
                 </button>
               </div>
             </motion.div>
@@ -2596,12 +2786,12 @@ service cloud.firestore {
               <div className="w-16 h-16 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
                 <Lock className="w-8 h-8 text-amber-600" />
               </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">ফোল্ডারটি আনলক করুন</h3>
-              <p className="text-sm text-slate-500 mb-8">"{showUnlock.name}" ফোল্ডারটি দেখার জন্য পাসওয়ার্ড দিন।</p>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">{t('unlockFolder')}</h3>
+              <p className="text-sm text-slate-500 mb-8">"{showUnlock.name}" {t('unlockFolderDesc')}</p>
               
               <input 
                 type="password" 
-                placeholder="পাসওয়ার্ড" 
+                placeholder={t('password')}
                 value={unlockPassword}
                 onChange={(e) => setUnlockPassword(e.target.value)}
                 className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl mb-4 text-center tracking-widest focus:border-indigo-500 outline-none transition-all"
@@ -2615,7 +2805,7 @@ service cloud.firestore {
                 onClick={handleUnlock}
                 className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
               >
-                আনলক করুন
+                {t('unlock')}
               </button>
               
               <button 
@@ -2630,14 +2820,14 @@ service cloud.firestore {
                 }}
                 className="text-xs text-indigo-600 font-bold hover:underline"
               >
-                পাসওয়ার্ড ভুলে গেছেন?
+                {t('forgotPassword')}
               </button>
               
               <button 
                 onClick={() => setShowUnlock(null)}
                 className="block w-full mt-6 text-slate-400 text-sm font-medium"
               >
-                বাতিল
+                {t('cancel')}
               </button>
             </motion.div>
           </div>
@@ -2657,11 +2847,11 @@ service cloud.firestore {
                   <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
                     <Mail className="w-8 h-8 text-indigo-600" />
                   </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-2">পাসওয়ার্ড রিকভারি</h3>
-                  <p className="text-sm text-slate-500 mb-8">আপনার জিমেইল ভেরিফিকেশনের মাধ্যমে পাসওয়ার্ড রিসেট করুন।</p>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{t('forgotPassword')}</h3>
+                  <p className="text-sm text-slate-500 mb-8">{t('recoveryDesc')}</p>
                   
                   <div className="p-4 bg-slate-50 rounded-2xl mb-8 text-left">
-                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">আপনার ইমেইল</p>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">{t('yourEmail')}</p>
                     <p className="text-sm font-bold text-slate-700">{user.email}</p>
                   </div>
 
@@ -2671,9 +2861,9 @@ service cloud.firestore {
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${configStatus.emailConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
                           {configStatus.emailConfigured ? (
-                            <span>ইমেইল সার্ভার প্রস্তুত ({configStatus.user})</span>
+                            <span>{t('emailConfigured')} ({configStatus.user})</span>
                           ) : (
-                            <span>ইমেইল সার্ভার কনফিগার করা নেই</span>
+                            <span>{t('emailNotConfigured')}</span>
                           )}
                         </div>
                         
@@ -2682,13 +2872,13 @@ service cloud.firestore {
                           disabled={isTestingConnection}
                           className="px-2 py-1 bg-white/50 hover:bg-white rounded-lg border border-current font-bold transition-all disabled:opacity-50"
                         >
-                          {isTestingConnection ? 'চেক হচ্ছে...' : 'টেস্ট করুন'}
+                          {isTestingConnection ? t('checking') : t('test')}
                         </button>
                       </div>
                       
                       {!configStatus.emailConfigured && (
                         <p className="mt-2 text-[10px] text-rose-500 font-medium text-left">
-                          * আপনি যদি আসল ইমেইল পেতে চান, তবে AI Studio-র সেটিংসে EMAIL_USER এবং EMAIL_PASS ভেরিয়েবলগুলো সেট করে সার্ভার রিস্টার্ট দিন।
+                          * {t('emailConfigWarning')}
                         </p>
                       )}
                     </div>
@@ -2702,7 +2892,7 @@ service cloud.firestore {
                     {isSendingCode ? (
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      'ভেরিফিকেশন কোড পাঠান'
+                      t('sendCode')
                     )}
                   </button>
                 </>
@@ -2713,8 +2903,8 @@ service cloud.firestore {
                   <div className="w-16 h-16 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
                     <Key className="w-8 h-8 text-amber-600" />
                   </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-2">কোড যাচাই করুন</h3>
-                  <p className="text-sm text-slate-500 mb-8">আপনার ইমেইলে পাঠানো ৬ ডিজিটের কোডটি দিন।</p>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{t('verify')}</h3>
+                  <p className="text-sm text-slate-500 mb-8">{t('verifyCodeDesc')}</p>
                   
                   <input 
                     type="text" 
@@ -2732,7 +2922,7 @@ service cloud.firestore {
                     onClick={handleVerifyCode}
                     className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
                   >
-                    যাচাই করুন
+                    {t('verify')}
                   </button>
                 </>
               )}
@@ -2742,12 +2932,12 @@ service cloud.firestore {
                   <div className="w-16 h-16 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
                     <Lock className="w-8 h-8 text-emerald-600" />
                   </div>
-                  <h3 className="text-xl font-bold text-slate-900 mb-2">নতুন পাসওয়ার্ড</h3>
-                  <p className="text-sm text-slate-500 mb-8">ফোল্ডারটির জন্য একটি নতুন পাসওয়ার্ড সেট করুন।</p>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{t('resetPassword')}</h3>
+                  <p className="text-sm text-slate-500 mb-8">{t('resetPasswordDesc')}</p>
                   
                   <input 
                     type="password" 
-                    placeholder="নতুন পাসওয়ার্ড" 
+                    placeholder={t('password')}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl mb-6 text-center tracking-widest focus:border-indigo-500 outline-none transition-all"
@@ -2759,7 +2949,7 @@ service cloud.firestore {
                     disabled={!newPassword}
                     className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mb-4"
                   >
-                    পাসওয়ার্ড সেট করুন
+                    {t('save')}
                   </button>
                 </>
               )}
@@ -2772,7 +2962,7 @@ service cloud.firestore {
                 }}
                 className="block w-full text-slate-400 text-sm font-medium"
               >
-                বাতিল
+                {t('cancel')}
               </button>
             </motion.div>
           </div>
@@ -2810,7 +3000,7 @@ service cloud.firestore {
                 ) : (
                   <div className="p-10 text-center">
                     <FileIcon className="w-20 h-20 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-500">এই ফাইলটির প্রিভিউ দেখা সম্ভব নয়।</p>
+                    <p className="text-slate-500">{t('noPreview')}</p>
                   </div>
                 )}
               </div>
@@ -2825,13 +3015,13 @@ service cloud.firestore {
                     className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-xl shadow-indigo-900/40"
                   >
                     <Download className="w-4 h-4" />
-                    ডাউনলোড করুন
+                    {t('download')}
                   </button>
                   <button 
                     onClick={() => setShowPreview(null)}
                     className="px-8 py-3 bg-white/10 text-white font-bold rounded-2xl hover:bg-white/20 transition-all"
                   >
-                    বন্ধ করুন
+                    {t('close')}
                   </button>
                 </div>
               </div>
@@ -2845,7 +3035,7 @@ service cloud.firestore {
         {(isUploading || isPreviewLoading) && (
           <div className="bg-slate-900 text-white px-4 py-2 rounded-full text-xs shadow-2xl flex items-center gap-2 animate-bounce">
             <span className="w-2 h-2 bg-indigo-500 rounded-full animate-ping"></span>
-            {isPreviewLoading ? 'প্রিভিউ লোড হচ্ছে...' : 'প্রসেসিং হচ্ছে...'}
+            {isPreviewLoading ? t('loadingPreview') : t('processing')}
           </div>
         )}
       </footer>
