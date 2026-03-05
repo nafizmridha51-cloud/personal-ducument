@@ -959,59 +959,60 @@ const App: React.FC = () => {
     if (window.confirm(t('confirmDeleteFolder'))) {
       setIsDeleting(id);
       try {
-        setUnlockedFolderIds(unlockedFolderIds.filter(fid => fid !== id));
-        if (isDemoMode) {
-          setFiles(files.filter(f => f.folderId !== id));
-          setFolders(folders.filter(f => f.id !== id));
-          if (activeFolderId === id) setActiveFolderId(null);
-          setIsDeleting(null);
-          return;
-        }
-        
-        if (!user) throw new Error("User not authenticated");
-        
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
-        const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
-        const folderFiles = files.filter(f => f.folderId === id);
-        console.log(`Deleting folder ${id} with ${folderFiles.length} files`);
         
-        // Delete all files and their chunks
-        for (const file of folderFiles) {
-          // Delete chunks
-          const chunksQuery = query(
-            collection(db, 'fileChunks'), 
-            where('fileId', '==', file.id)
-          );
-          const chunksSnapshot = await getDocs(chunksQuery);
-          
-          if (!chunksSnapshot.empty) {
-            let batch = writeBatch(db);
-            let count = 0;
-            for (const chunkDoc of chunksSnapshot.docs) {
-              batch.delete(chunkDoc.ref);
-              count++;
-              if (count === 400) {
-                await batch.commit();
-                batch = writeBatch(db);
-                count = 0;
-              }
-            }
-            if (count > 0) await batch.commit();
+        // Recursive function to delete folder and its contents
+        const deleteRecursive = async (folderId: string) => {
+          // 1. Find all subfolders
+          const subfoldersToDelete = folders.filter(f => f.parentId === folderId);
+          for (const sub of subfoldersToDelete) {
+            await deleteRecursive(sub.id);
           }
 
-          // Delete metadata
-          await deleteDoc(doc(db, 'files', file.id));
-        }
-        
-        // Then delete the folder
-        await deleteDoc(doc(db, 'folders', id));
-        console.log("Folder and its contents deleted successfully");
-        
-        if (activeFolderId === id) setActiveFolderId(null);
-        
-        // Optimistic update
-        setFolders(prev => prev.filter(f => f.id !== id));
-        setFiles(prev => prev.filter(f => f.folderId !== id));
+          // 2. Find all files in this folder
+          const folderFiles = files.filter(f => f.folderId === folderId);
+          
+          // 3. Delete files and their chunks
+          for (const file of folderFiles) {
+            if (!isDemoMode) {
+              const chunksQuery = query(
+                collection(db, 'fileChunks'), 
+                where('fileId', '==', file.id)
+              );
+              const chunksSnapshot = await getDocs(chunksQuery);
+              
+              if (!chunksSnapshot.empty) {
+                let batch = writeBatch(db);
+                let count = 0;
+                for (const chunkDoc of chunksSnapshot.docs) {
+                  batch.delete(chunkDoc.ref);
+                  count++;
+                  if (count === 400) {
+                    await batch.commit();
+                    batch = writeBatch(db);
+                    count = 0;
+                  }
+                }
+                if (count > 0) await batch.commit();
+              }
+              await deleteDoc(doc(db, 'files', file.id));
+            }
+          }
+
+          // 4. Delete the folder itself
+          if (!isDemoMode) {
+            await deleteDoc(doc(db, 'folders', folderId));
+          }
+          
+          // Update local state
+          setUnlockedFolderIds(prev => prev.filter(fid => fid !== folderId));
+          setFolders(prev => prev.filter(f => f.id !== folderId));
+          setFiles(prev => prev.filter(f => f.folderId !== folderId));
+          if (activeFolderId === folderId) setActiveFolderId(null);
+        };
+
+        await deleteRecursive(id);
+        console.log("Folder and all its nested contents deleted successfully");
       } catch (err: any) {
         console.error("Delete folder error:", err);
         alert(t('delete') + ': ' + (err.message || 'Unknown error'));
@@ -1527,7 +1528,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f8fafc]">
+    <div className="h-screen flex flex-col bg-[#f8fafc] overflow-hidden">
       {/* Remote Access Modal */}
       <AnimatePresence>
         {showRemoteLogin && (
@@ -1910,124 +1911,126 @@ service cloud.firestore {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden h-full">
       {/* Sidebar */}
-      <aside className="w-full md:w-80 bg-slate-900 text-white p-6 flex flex-col border-r border-slate-800">
-          <div className="flex items-center justify-between mb-10 relative">
-            <div 
-              className="flex items-center gap-3 cursor-pointer hover:bg-slate-800/50 p-1 rounded-2xl transition-all"
-              onClick={() => setShowUserMenu(!showUserMenu)}
-            >
-              <img 
-                src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'User')}&background=6366f1&color=fff`} 
-                alt="" 
-                className="w-11 h-11 rounded-full border-2 border-indigo-500/30 shadow-lg shadow-indigo-500/10" 
-              />
-              <div className="overflow-hidden">
-                <p className="text-sm font-bold truncate text-white">{user.displayName}</p>
+      <aside className="w-full md:w-80 bg-slate-900 text-white flex flex-col border-r border-slate-800 h-full overflow-hidden">
+          <div className="p-6 pb-0">
+            <div className="flex items-center justify-between mb-10 relative">
+              <div 
+                className="flex items-center gap-3 cursor-pointer hover:bg-slate-800/50 p-1 rounded-2xl transition-all"
+                onClick={() => setShowUserMenu(!showUserMenu)}
+              >
+                <img 
+                  src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'User')}&background=6366f1&color=fff`} 
+                  alt="" 
+                  className="w-11 h-11 rounded-full border-2 border-indigo-500/30 shadow-lg shadow-indigo-500/10" 
+                />
+                <div className="overflow-hidden">
+                  <p className="text-sm font-bold truncate text-white">{user.displayName}</p>
+                </div>
+              </div>
+              
+              {showUserMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                  <div className="absolute left-0 top-full mt-2 w-56 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 py-2 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="px-4 py-2 border-b border-slate-700/50 mb-1">
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{t('account')}</p>
+                      <p className="text-xs text-slate-300 truncate">{user.email}</p>
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        setNewDisplayName(user.displayName || '');
+                        setShowProfileEdit(true);
+                        setShowUserMenu(false);
+                      }} 
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      {t('changeName')}
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        profilePhotoRef.current?.click();
+                        setShowUserMenu(false);
+                      }} 
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                    >
+                      <Camera className="w-4 h-4" />
+                      {t('changePhoto')}
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        setShowRemoteSettings(true);
+                        setShowUserMenu(false);
+                      }} 
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      {t('remoteSettings')}
+                    </button>
+
+                    <div className="h-px bg-slate-700/50 my-1" />
+
+                    <button 
+                      onClick={() => {
+                        if (isDemoMode) {
+                          setIsDemoMode(false);
+                        } else {
+                          logout();
+                        }
+                        setUnlockedFolderIds([]);
+                        setActiveFolderId(null);
+                        setFolders([]);
+                        setFiles([]);
+                        setShowUserMenu(false);
+                      }} 
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      {t('logout')}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleLanguage}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded-lg uppercase tracking-wider transition-all border border-slate-700"
+                >
+                  <Languages className="w-3.5 h-3.5" />
+                  {language === 'bn' ? 'English' : 'বাংলা'}
+                </button>
+                {isDemoMode && (
+                  <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider">Demo</span>
+                )}
               </div>
             </div>
-            
-            {showUserMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                <div className="absolute left-0 top-full mt-2 w-56 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl z-50 py-2 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-4 py-2 border-b border-slate-700/50 mb-1">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{t('account')}</p>
-                    <p className="text-xs text-slate-300 truncate">{user.email}</p>
+
+            {remoteAccess.isActive && (
+              <div className="mb-6 bg-indigo-600/20 border border-indigo-500/30 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">{t('remoteVault')}</span>
                   </div>
-                  
                   <button 
-                    onClick={() => {
-                      setNewDisplayName(user.displayName || '');
-                      setShowProfileEdit(true);
-                      setShowUserMenu(false);
-                    }} 
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
+                    onClick={handleExitRemoteAccess}
+                    className="text-[10px] bg-indigo-500 hover:bg-indigo-400 px-2 py-0.5 rounded transition-colors"
                   >
-                    <Pencil className="w-4 h-4" />
-                    {t('changeName')}
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      profilePhotoRef.current?.click();
-                      setShowUserMenu(false);
-                    }} 
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
-                  >
-                    <Camera className="w-4 h-4" />
-                    {t('changePhoto')}
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      setShowRemoteSettings(true);
-                      setShowUserMenu(false);
-                    }} 
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors"
-                  >
-                    <ShieldCheck className="w-4 h-4" />
-                    {t('remoteSettings')}
-                  </button>
-
-                  <div className="h-px bg-slate-700/50 my-1" />
-
-                  <button 
-                    onClick={() => {
-                      if (isDemoMode) {
-                        setIsDemoMode(false);
-                      } else {
-                        logout();
-                      }
-                      setUnlockedFolderIds([]);
-                      setActiveFolderId(null);
-                      setFolders([]);
-                      setFiles([]);
-                      setShowUserMenu(false);
-                    }} 
-                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    {t('logout')}
+                    {t('close')}
                   </button>
                 </div>
-              </>
-            )}
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={toggleLanguage}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded-lg uppercase tracking-wider transition-all border border-slate-700"
-              >
-                <Languages className="w-3.5 h-3.5" />
-                {language === 'bn' ? 'English' : 'বাংলা'}
-              </button>
-              {isDemoMode && (
-                <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider">Demo</span>
-              )}
-            </div>
-          </div>
-
-        {remoteAccess.isActive && (
-          <div className="mb-6 bg-indigo-600/20 border border-indigo-500/30 rounded-xl p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">{t('remoteVault')}</span>
+                <p className="text-xs text-slate-300 truncate font-medium">{remoteAccess.user?.email}</p>
               </div>
-              <button 
-                onClick={handleExitRemoteAccess}
-                className="text-[10px] bg-indigo-500 hover:bg-indigo-400 px-2 py-0.5 rounded transition-colors"
-              >
-                {t('close')}
-              </button>
-            </div>
-            <p className="text-xs text-slate-300 truncate font-medium">{remoteAccess.user?.email}</p>
+            )}
           </div>
-        )}
 
-        <div className="flex-1 overflow-y-auto space-y-6 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-6 pt-0 space-y-6 custom-scrollbar">
           <div>
             <div className="flex items-center justify-between mb-4">
               <p className="text-[11px] uppercase text-slate-500 font-bold tracking-wider">{t('yourFolders')}</p>
@@ -2214,7 +2217,7 @@ service cloud.firestore {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+      <main className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
         <header className="bg-white border-b border-slate-200 p-4 md:px-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="relative flex-1 max-w-md">
@@ -2295,6 +2298,37 @@ service cloud.firestore {
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
                     {subFolders.map(folder => {
                       const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
+                      const isEditing = editingFolderId === folder.id;
+
+                      if (isEditing) {
+                        return (
+                          <div key={folder.id} className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-indigo-500 shadow-lg transition-all">
+                            <div className="mb-2">
+                              <FolderIcon className="w-10 h-10 text-indigo-500" />
+                            </div>
+                            <input 
+                              autoFocus
+                              className="w-full bg-slate-50 text-slate-800 text-xs font-bold px-2 py-1 rounded border border-slate-200 outline-none focus:border-indigo-500 text-center"
+                              value={editingFolderName}
+                              onChange={(e) => setEditingFolderName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') renameFolder(folder.id, editingFolderName);
+                                if (e.key === 'Escape') setEditingFolderId(null);
+                              }}
+                              onBlur={() => renameFolder(folder.id, editingFolderName)}
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button onClick={() => renameFolder(folder.id, editingFolderName)} className="text-emerald-500 p-1 hover:bg-emerald-50 rounded transition-colors">
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => setEditingFolderId(null)} className="text-rose-500 p-1 hover:bg-rose-50 rounded transition-colors">
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
                       return (
                         <button
                           key={folder.id}
@@ -2305,8 +2339,33 @@ service cloud.firestore {
                               setActiveFolderId(folder.id);
                             }
                           }}
-                          className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group"
+                          className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group relative"
                         >
+                          {!remoteAccess.isActive && (
+                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingFolderId(folder.id);
+                                  setEditingFolderName(folder.name);
+                                }}
+                                className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg"
+                                title={t('rename')}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteFolder(folder.id);
+                                }}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg"
+                                title={t('delete')}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                           <div className="relative mb-2">
                             <FolderIcon className="w-10 h-10 text-indigo-400 group-hover:text-indigo-500 transition-colors" />
                             {folder.password && (
