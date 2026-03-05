@@ -32,8 +32,7 @@ import {
   ExternalLink,
   ShieldCheck,
   ArrowRightLeft,
-  Languages,
-  Sparkles
+  Languages
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -66,7 +65,6 @@ import {
 } from 'firebase/firestore';
 import { User, Folder, FileData } from './types';
 import { translations } from './translations';
-import { analyzeDocument } from './services/geminiService';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Settings, Info } from 'lucide-react';
@@ -219,8 +217,6 @@ const App: React.FC = () => {
   });
   const [newDisplayName, setNewDisplayName] = useState('');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
-  const [fileSummaries, setFileSummaries] = useState<Record<string, string>>({});
-  const [summarizingId, setSummarizingId] = useState<string | null>(null);
   
   // Form States
   const [newFolderName, setNewFolderName] = useState('');
@@ -420,33 +416,6 @@ const App: React.FC = () => {
       alert(t('loginError'));
     } finally {
       setIsUpdatingProfile(false);
-    }
-  };
-
-  const handleSummarize = async (file: FileData) => {
-    if (summarizingId) return;
-    setSummarizingId(file.id);
-    try {
-      let base64Data = file.dataUrl;
-      if (base64Data === 'CHUNKED') {
-        const dbToUse = remoteAccess.isActive ? remoteAccess.db : getFirebaseDb();
-        if (!dbToUse) throw new Error("Database not initialized");
-        
-        const q = query(
-          collection(dbToUse, 'fileChunks'),
-          where('fileId', '==', file.id),
-          orderBy('index', 'asc')
-        );
-        const chunkDocs = await getDocs(q);
-        base64Data = 'data:' + file.type + ';base64,' + chunkDocs.docs.map(doc => doc.data().data).join('');
-      }
-      const summary = await analyzeDocument(file.name, base64Data, file.type);
-      setFileSummaries(prev => ({ ...prev, [file.id]: summary }));
-    } catch (error) {
-      console.error("Summarize Error:", error);
-      alert(t('previewLoadGeneralError'));
-    } finally {
-      setSummarizingId(null);
     }
   };
 
@@ -2436,34 +2405,10 @@ service cloud.firestore {
                         <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">{file.size} • {file.uploadDate}</p>
                       </div>
 
-                      {fileSummaries[file.id] && (
-                        <div className="mb-4 p-3 bg-indigo-50 rounded-2xl border border-indigo-100 animate-in fade-in slide-in-from-top-2 duration-300">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Sparkles className="w-3 h-3 text-indigo-600" />
-                            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">{t('aiSummary')}</span>
-                          </div>
-                          <p className="text-[11px] text-slate-600 leading-relaxed italic">
-                            "{fileSummaries[file.id]}"
-                          </p>
-                        </div>
-                      )}
-                      
-                      <div className="mt-auto pt-2 flex gap-2">
-                        <button 
-                          onClick={() => handleSummarize(file)}
-                          disabled={summarizingId === file.id}
-                          className="flex-1 bg-indigo-50 text-indigo-600 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                          {summarizingId === file.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3.5 h-3.5" />
-                          )}
-                          {summarizingId === file.id ? t('summarizing') : t('summarize')}
-                        </button>
+                      <div className="mt-auto pt-2">
                         <button 
                           onClick={() => downloadFile(file)}
-                          className="flex-1 bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
+                          className="w-full bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
                         >
                           <Download className="w-3.5 h-3.5" />
                           {t('download')}
