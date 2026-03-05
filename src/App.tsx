@@ -138,6 +138,9 @@ const App: React.FC = () => {
   const [showAddFolder, setShowAddFolder] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [showUnlock, setShowUnlock] = useState<Folder | null>(null);
+  const [showDeleteFolder, setShowDeleteFolder] = useState<Folder | null>(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState(false);
   const [showForgot, setShowForgot] = useState<Folder | null>(null);
   const [recoveryStep, setRecoveryStep] = useState<'send' | 'verify' | 'reset'>('send');
   const [generatedCode, setGeneratedCode] = useState('');
@@ -957,8 +960,30 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteFolder = async (id: string) => {
+  const deleteFolder = async (id: string, password?: string) => {
+    const folder = folders.find(f => f.id === id);
+    if (!folder) return;
+
+    // If folder is locked, require password
+    if (folder.password) {
+      // If no password provided yet, show the modal
+      if (password === undefined) {
+        setShowDeleteFolder(folder);
+        setDeletePassword('');
+        setDeleteError(false);
+        return;
+      }
+      
+      // If password provided but incorrect
+      if (password !== folder.password) {
+        setDeleteError(true);
+        return;
+      }
+    }
+
+    // If we reach here, either folder is not locked OR password is correct
     if (window.confirm(t('confirmDeleteFolder'))) {
+      setShowDeleteFolder(null);
       setIsDeleting(id);
       try {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
@@ -2084,10 +2109,10 @@ service cloud.firestore {
               {folders.filter(f => !f.parentId).length === 0 && (
                 <p className="text-xs text-slate-500 italic px-2">{t('noFolders')}</p>
               )}
-              {folders.filter(f => !f.parentId).map((folder) => {
+              {folders.filter(f => !f.parentId).map((folder, index) => {
                 const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
                 return (
-                  <div key={folder.id} className="group relative flex items-center gap-1">
+                  <div key={`sidebar-folder-${folder.id}-${index}`} className="group relative flex items-center gap-1">
                     {editingFolderId === folder.id ? (
                       <div className="flex-1 flex items-center gap-2 p-2 bg-slate-800/50 rounded-xl border border-indigo-500/50">
                         <input 
@@ -2326,13 +2351,13 @@ service cloud.firestore {
                 <div className="mb-8">
                   <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest mb-4">{t('subfolders')}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-                    {subFolders.map(folder => {
+                    {subFolders.map((folder, index) => {
                       const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
                       const isEditing = editingFolderId === folder.id;
 
                       if (isEditing) {
                         return (
-                          <div key={folder.id} className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-indigo-500 shadow-lg transition-all">
+                          <div key={`main-folder-edit-${folder.id}-${index}`} className="flex flex-col items-center p-4 bg-white rounded-2xl border-2 border-indigo-500 shadow-lg transition-all">
                             <div className="mb-2">
                               <FolderIcon className="w-10 h-10 text-indigo-500" />
                             </div>
@@ -2361,7 +2386,7 @@ service cloud.firestore {
 
                       return (
                         <div
-                          key={folder.id}
+                          key={`main-folder-${folder.id}-${index}`}
                           onClick={() => {
                             if (isLocked) {
                               setShowUnlock(folder);
@@ -2427,10 +2452,10 @@ service cloud.firestore {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {filteredFiles.map((file) => (
+                  {filteredFiles.map((file, index) => (
                     <motion.div 
                       layout
-                      key={file.id} 
+                      key={`main-file-${file.id}-${index}`} 
                       className="group bg-white p-5 rounded-3xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-indigo-100 transition-all relative overflow-hidden"
                     >
                       <div className="flex items-start justify-between mb-4">
@@ -2689,9 +2714,9 @@ service cloud.firestore {
                       <p className="text-sm text-slate-500">{t('noFolders')}</p>
                     </div>
                   ) : (
-                    folders.map(folder => (
+                    folders.map((folder, index) => (
                       <button
-                        key={folder.id}
+                        key={`move-folder-${folder.id}-${index}`}
                         onClick={() => moveFile(movingFile.id, folder.id)}
                         disabled={folder.id === movingFile.folderId}
                         className={cn(
@@ -2883,6 +2908,53 @@ service cloud.firestore {
             </motion.div>
           </div>
         )}
+
+        {/* Delete Folder Password Modal */}
+        <AnimatePresence>
+          {showDeleteFolder && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white w-full max-w-sm p-8 rounded-[32px] shadow-2xl text-center"
+              >
+                <div className="w-16 h-16 bg-rose-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                  <Trash2 className="w-8 h-8 text-rose-600" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">{t('delete')} "{showDeleteFolder.name}"</h3>
+                <p className="text-sm text-slate-500 mb-8">{t('enterPasswordToDelete')}</p>
+                
+                <input 
+                  type="password" 
+                  placeholder={t('password')}
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl mb-4 text-center tracking-widest focus:border-indigo-500 outline-none transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && deleteFolder(showDeleteFolder.id, deletePassword)}
+                />
+                
+                {deleteError && <p className="text-rose-500 text-xs mb-4 flex items-center justify-center gap-1"><AlertCircle className="w-3 h-3" /> {t('wrongPassword')}</p>}
+                
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setShowDeleteFolder(null)}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all"
+                  >
+                    {t('cancel')}
+                  </button>
+                  <button 
+                    onClick={() => deleteFolder(showDeleteFolder.id, deletePassword)}
+                    className="flex-1 py-4 bg-rose-600 text-white font-bold rounded-2xl hover:bg-rose-700 transition-all shadow-lg shadow-rose-100"
+                  >
+                    {t('delete')}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Unlock Modal */}
         {showUnlock && (

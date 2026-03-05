@@ -199,7 +199,8 @@ export const translations = {
     back: "পিছনে",
     allFiles: "সব ফাইল",
     subfolders: "সাব-ফোল্ডার",
-    in: "মধ্যে"
+    in: "মধ্যে",
+    enterPasswordToDelete: "মুছে ফেলার জন্য পাসওয়ার্ড দিন"
   },
   en: {
     appName: "Secure Doc Vault",
@@ -400,6 +401,7 @@ export const translations = {
     back: "Back",
     allFiles: "All Files",
     subfolders: "Subfolders",
-    in: "in"
+    in: "in",
+    enterPasswordToDelete: "Enter password to delete"
   }
 };
