@@ -14,6 +14,7 @@ export interface Folder {
   icon?: string;
   password?: string;
   isLocked: boolean;
+  parentId?: string | null;
 }
 
 export interface FileData {

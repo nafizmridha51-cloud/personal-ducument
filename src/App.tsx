@@ -18,6 +18,7 @@ import {
   Mail,
   AlertCircle,
   ChevronRight,
+  ChevronLeft,
   Plus,
   Eye,
   EyeOff,
@@ -585,7 +586,8 @@ const App: React.FC = () => {
         createdAt: Date.now(),
         icon: '📁',
         password: folderPassword || undefined,
-        isLocked: !!folderPassword
+        isLocked: !!folderPassword,
+        parentId: activeFolderId || null
       };
       setFolders([newFolder, ...folders]);
       setNewFolderName('');
@@ -604,7 +606,8 @@ const App: React.FC = () => {
         createdAt: Date.now(),
         icon: '📁',
         password: folderPassword || null,
-        isLocked: !!folderPassword
+        isLocked: !!folderPassword,
+        parentId: activeFolderId || null
       });
       setNewFolderName('');
       setFolderPassword('');
@@ -1512,8 +1515,12 @@ const App: React.FC = () => {
   }
 
   const currentFolder = folders.find(f => f.id === activeFolderId);
+  const parentFolder = currentFolder?.parentId ? folders.find(f => f.id === currentFolder.parentId) : null;
   const isCurrentFolderLocked = currentFolder?.password && !unlockedFolderIds.includes(currentFolder.id);
   
+  const subFolders = activeFolderId 
+    ? folders.filter(f => f.parentId === activeFolderId)
+    : folders.filter(f => !f.parentId);
   const filteredFiles = files.filter(f => 
     f.folderId === activeFolderId && 
     f.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -2035,10 +2042,25 @@ service cloud.firestore {
             </div>
             
             <div className="space-y-1">
-              {folders.length === 0 && (
+              <button
+                onClick={() => setActiveFolderId(null)}
+                className={cn(
+                  "w-full flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
+                  activeFolderId === null 
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' 
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                )}
+              >
+                <div className="w-5 h-5 flex items-center justify-center">
+                  <ChevronLeft className={cn("w-4 h-4", activeFolderId === null ? "text-white" : "text-indigo-500")} />
+                </div>
+                <span className="text-sm font-medium">{t('allFiles')}</span>
+              </button>
+
+              {folders.filter(f => !f.parentId).length === 0 && (
                 <p className="text-xs text-slate-500 italic px-2">{t('noFolders')}</p>
               )}
-              {folders.map((folder) => {
+              {folders.filter(f => !f.parentId).map((folder) => {
                 const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
                 return (
                   <div key={folder.id} className="group relative flex items-center gap-1">
@@ -2219,42 +2241,89 @@ service cloud.firestore {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-10 custom-scrollbar">
-          {!activeFolderId || isCurrentFolderLocked ? (
+          {isCurrentFolderLocked ? (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
-                {isCurrentFolderLocked ? (
-                  <Lock className="w-12 h-12 text-amber-500" />
-                ) : (
-                  <FolderIcon className="w-12 h-12 text-slate-300" />
-                )}
+                <Lock className="w-12 h-12 text-amber-500" />
               </div>
               <h2 className="text-2xl font-bold text-slate-800 mb-2 tracking-tight">
-                {isCurrentFolderLocked ? t('folderLocked') : t('selectFolder')}
+                {t('folderLocked')}
               </h2>
               <p className="text-slate-500 max-w-sm">
-                {isCurrentFolderLocked 
-                  ? t('unlockToView')
-                  : t('selectFolderDesc')}
+                {t('unlockToView')}
               </p>
-              {isCurrentFolderLocked && (
-                <button 
-                  onClick={() => setShowUnlock(currentFolder)}
-                  className="mt-6 px-8 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
-                >
-                  {t('unlock')}
-                </button>
-              )}
+              <button 
+                onClick={() => setShowUnlock(currentFolder)}
+                className="mt-6 px-8 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+              >
+                {t('unlock')}
+              </button>
             </div>
           ) : (
             <div className="animate-in fade-in duration-500">
-              <div className="flex items-center gap-3 mb-8">
-                <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{currentFolder?.name}</h2>
+              <div className="flex items-center gap-4 mb-8">
+                {activeFolderId && (
+                  <button 
+                    onClick={() => setActiveFolderId(currentFolder?.parentId || null)}
+                    className="p-2 bg-white rounded-xl shadow-sm border border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-100 transition-all"
+                    title={t('back')}
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                )}
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                    {parentFolder && (
+                      <>
+                        <span className="cursor-pointer hover:text-indigo-500" onClick={() => setActiveFolderId(parentFolder.id)}>{parentFolder.name}</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </>
+                    )}
+                    <span>{currentFolder?.name || t('allFiles')}</span>
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{currentFolder?.name || t('allFiles')}</h2>
+                </div>
                 <span className="px-3 py-1 bg-slate-200 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">
                   {filteredFiles.length} {t('files')}
                 </span>
               </div>
 
-              {filteredFiles.length === 0 ? (
+              {/* Subfolders Section */}
+              {subFolders.length > 0 && (
+                <div className="mb-8">
+                  <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest mb-4">{t('subfolders')}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                    {subFolders.map(folder => {
+                      const isLocked = folder.isLocked && !unlockedFolderIds.includes(folder.id);
+                      return (
+                        <button
+                          key={folder.id}
+                          onClick={() => {
+                            if (isLocked) {
+                              setShowUnlock(folder);
+                            } else {
+                              setActiveFolderId(folder.id);
+                            }
+                          }}
+                          className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group"
+                        >
+                          <div className="relative mb-2">
+                            <FolderIcon className="w-10 h-10 text-indigo-400 group-hover:text-indigo-500 transition-colors" />
+                            {folder.password && (
+                              <div className="absolute -top-1 -right-1 bg-white rounded-full p-1 shadow-sm border border-slate-100">
+                                {isLocked ? <Lock className="w-2.5 h-2.5 text-amber-600" /> : <Unlock className="w-2.5 h-2.5 text-emerald-600" />}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{folder.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {filteredFiles.length === 0 && subFolders.length === 0 ? (
                 <div className="bg-white border-2 border-dashed border-slate-200 rounded-[32px] p-20 text-center">
                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
                     <FileIcon className="w-8 h-8 text-slate-300" />
@@ -2583,7 +2652,14 @@ service cloud.firestore {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white w-full max-w-sm p-8 rounded-[32px] shadow-2xl"
             >
-              <h3 className="text-xl font-bold text-slate-900 mb-6">{t('newFolder')}</h3>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">{t('newFolder')}</h3>
+              {activeFolderId && (
+                <p className="text-xs text-slate-500 mb-6 flex items-center gap-1">
+                  <FolderIcon className="w-3 h-3" />
+                  {t('subfolders')} {t('in')} <span className="font-bold text-indigo-600">{currentFolder?.name}</span>
+                </p>
+              )}
+              {!activeFolderId && <div className="mb-6" />}
               <div className="space-y-4">
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-slate-400 mb-2 tracking-widest">{t('folderName')}</label>

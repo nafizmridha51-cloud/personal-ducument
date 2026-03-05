@@ -195,7 +195,11 @@ export const translations = {
     password: "পাসওয়ার্ড",
     optional: "(ঐচ্ছিক)",
     lockFolderDesc: "ফোল্ডারটি লক করার জন্য পাসওয়ার্ড দিন।",
-    clickToUpload: "আপলোড করতে ক্লিক করুন"
+    clickToUpload: "আপলোড করতে ক্লিক করুন",
+    back: "পিছনে",
+    allFiles: "সব ফাইল",
+    subfolders: "সাব-ফোল্ডার",
+    in: "মধ্যে"
   },
   en: {
     appName: "Secure Doc Vault",
@@ -392,6 +396,10 @@ export const translations = {
     password: "Password",
     optional: " (Optional)",
     lockFolderDesc: "Enter a password to lock the folder.",
-    clickToUpload: "Click to upload"
+    clickToUpload: "Click to upload",
+    back: "Back",
+    allFiles: "All Files",
+    subfolders: "Subfolders",
+    in: "in"
   }
 };
