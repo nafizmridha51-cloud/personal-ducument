@@ -1,5 +1,5 @@
 {
   "name": "সুরক্ষিত নথি ভল্ট (Secure Doc Vault)",
   "description": "একটি আধুনিক এবং সুরক্ষিত ব্যক্তিগত ডকুমেন্ট ম্যানেজমেন্ট সিস্টেম যেখানে আপনি কাস্টম ফোল্ডার তৈরি করতে পারবেন, জিমেইল দিয়ে লগইন করতে পারবেন এবং প্রতিটি ফাইলের জন্য আলাদা পাসওয়ার্ড সেট করতে পারবেন।",
-  "requestFramePermissions": ["web-share"]
+  "requestFramePermissions": ["web-share", "display-capture", "camera", "microphone"]
 }

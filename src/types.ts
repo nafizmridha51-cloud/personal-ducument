@@ -15,6 +15,8 @@ export interface Folder {
   password?: string;
   isLocked: boolean;
   parentId?: string | null;
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
 
 export interface FileData {
@@ -28,4 +30,6 @@ export interface FileData {
   dataUrl: string; // Base64 representation or "CHUNKED"
   isChunked?: boolean;
   chunkCount?: number;
+  isDeleted?: boolean;
+  deletedAt?: number;
 }

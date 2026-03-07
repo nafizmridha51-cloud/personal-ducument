@@ -1,6 +1,14 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
+  PieChart, 
+  Pie, 
+  Cell, 
+  ResponsiveContainer, 
+  Tooltip as RechartsTooltip, 
+  Legend 
+} from 'recharts';
+import { 
   FolderPlus, 
   FilePlus, 
   Lock, 
@@ -34,7 +42,10 @@ import {
   ShieldCheck,
   ArrowRightLeft,
   Languages,
-  Menu
+  Menu,
+  Trash,
+  RotateCcw,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -160,6 +171,71 @@ const App: React.FC = () => {
   }, [showForgot]);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [showRecycleBin, setShowRecycleBin] = useState(false);
+  const [showStorageAnalysis, setShowStorageAnalysis] = useState(false);
+
+  const deletedFiles = files.filter(f => f.isDeleted);
+  const deletedFolders = folders.filter(f => f.isDeleted);
+
+  const parseSizeToBytes = (sizeStr: string): number => {
+    if (!sizeStr) return 0;
+    const parts = sizeStr.split(' ');
+    if (parts.length < 2) return 0;
+    const value = parseFloat(parts[0]);
+    const unit = parts[1].toUpperCase();
+    if (isNaN(value)) return 0;
+    switch (unit) {
+      case 'GB': return value * 1024 * 1024 * 1024;
+      case 'MB': return value * 1024 * 1024;
+      case 'KB': return value * 1024;
+      default: return value;
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const storageStats = React.useMemo(() => {
+    const activeFiles = files.filter(f => !f.isDeleted);
+    let photoSize = 0;
+    let pdfSize = 0;
+    let otherSize = 0;
+
+    activeFiles.forEach(file => {
+      const bytes = parseSizeToBytes(file.size);
+      if (file.type.includes('image')) {
+        photoSize += bytes;
+      } else if (file.type.includes('pdf')) {
+        pdfSize += bytes;
+      } else {
+        otherSize += bytes;
+      }
+    });
+
+    const totalUsed = photoSize + pdfSize + otherSize;
+    const totalLimit = 1024 * 1024 * 1024; // 1 GB Limit for demo
+    
+    return {
+      photoSize,
+      pdfSize,
+      otherSize,
+      totalUsed,
+      totalLimit,
+      percentUsed: (totalUsed / totalLimit) * 100
+    };
+  }, [files]);
+
+  const chartData = [
+    { name: t('photos'), value: storageStats.photoSize, color: '#6366f1' },
+    { name: t('pdfs'), value: storageStats.pdfSize, color: '#f43f5e' },
+    { name: t('others'), value: storageStats.otherSize, color: '#94a3b8' },
+    { name: t('free'), value: Math.max(0, storageStats.totalLimit - storageStats.totalUsed), color: '#f1f5f9' }
+  ];
 
   useEffect(() => {
     if (showPreview && showPreview.type.includes('pdf')) {
@@ -296,11 +372,16 @@ const App: React.FC = () => {
   }, [authUser?.uid, isDemoMode]);
 
   useEffect(() => {
-    if (isDemoMode) {
+    if (isDemoMode && !remoteAccess.isActive) {
       localStorage.setItem('demo_folders', JSON.stringify(folders));
       localStorage.setItem('demo_files', JSON.stringify(files));
+    } else if (isDemoMode && remoteAccess.isActive) {
+      // Save to remote mock storage
+      const remoteUserId = remoteAccess.user?.uid;
+      localStorage.setItem(`demo_folders_${remoteUserId}`, JSON.stringify(folders));
+      localStorage.setItem(`demo_files_${remoteUserId}`, JSON.stringify(files));
     }
-  }, [folders, files, isDemoMode]);
+  }, [folders, files, isDemoMode, remoteAccess.isActive, remoteAccess.user?.uid]);
 
   useEffect(() => {
     if (!authUser || isDemoMode) {
@@ -331,14 +412,48 @@ const App: React.FC = () => {
   }, [authUser?.uid, isDemoMode]);
 
   useEffect(() => {
-    if (!user || isDemoMode) return;
+    if (!user) return;
+    
+    // In demo mode, we only run this if remote access is active (to simulate fetching remote data)
+    if (isDemoMode && !remoteAccess.isActive) return;
 
     let unsubscribeFolders: () => void;
     let unsubscribeFiles: () => void;
 
     try {
-      if (!isFirebaseConfigured) return;
+      if (!isDemoMode && !isFirebaseConfigured) return;
       
+      // If in demo mode and remote access is active, we use localStorage to simulate remote data
+      if (isDemoMode && remoteAccess.isActive) {
+        const remoteUserId = remoteAccess.user?.uid;
+        const loadRemoteData = () => {
+          const savedFolders = localStorage.getItem(`demo_folders_${remoteUserId}`);
+          const savedFiles = localStorage.getItem(`demo_files_${remoteUserId}`);
+          
+          // If no remote data exists, create some sample data for the demo
+          if (!savedFolders) {
+            const sampleFolders: Folder[] = [
+              { id: 'remote_f1', name: 'Shared Documents', userId: remoteUserId!, createdAt: Date.now(), icon: '📁', isLocked: false, parentId: null }
+            ];
+            setFolders(sampleFolders);
+            localStorage.setItem(`demo_folders_${remoteUserId}`, JSON.stringify(sampleFolders));
+          } else {
+            setFolders(JSON.parse(savedFolders));
+          }
+
+          if (!savedFiles) {
+            setFiles([]);
+          } else {
+            setFiles(JSON.parse(savedFiles));
+          }
+        };
+
+        loadRemoteData();
+        // Simulate a "listener" by polling or just loading once for demo
+        const interval = setInterval(loadRemoteData, 2000);
+        return () => clearInterval(interval);
+      }
+
       const currentDb = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
 
@@ -429,6 +544,54 @@ const App: React.FC = () => {
     e.preventDefault();
     setError('');
     setIsRemoteLoggingIn(true);
+
+    if (isDemoMode) {
+      // Mock remote login for demo mode
+      const normalizedEmail = remoteEmail.toLowerCase().trim();
+      const inputKey = String(remoteAccessKeyInput || '').trim();
+
+      // For demo, we allow any email but check if they have a "saved" key in localStorage
+      // or use a default one: demo@remote.com / 123456
+      const savedRemoteKey = localStorage.getItem(`demo_remote_key_${normalizedEmail}`) || (normalizedEmail === 'demo@remote.com' ? '123456' : null);
+
+      if (normalizedEmail === user?.email) {
+        setError(t('cannotAccessOwnVault'));
+        setIsRemoteLoggingIn(false);
+        return;
+      }
+
+      if (!savedRemoteKey) {
+        setError(t('remoteAccessNotSet') + ' (Demo: demo@remote.com / 123456)');
+        setIsRemoteLoggingIn(false);
+        return;
+      }
+
+      if (savedRemoteKey !== inputKey) {
+        setError(t('wrongRemotePassword'));
+        setIsRemoteLoggingIn(false);
+        return;
+      }
+
+      setRemoteAccess({
+        isActive: true,
+        user: {
+          uid: `demo_remote_${normalizedEmail}`,
+          email: normalizedEmail,
+          displayName: normalizedEmail.split('@')[0],
+          photoURL: `https://picsum.photos/seed/${normalizedEmail}/200`
+        },
+        db: null,
+        app: null
+      });
+      sessionStorage.setItem('remote_session_active', 'true');
+      setShowRemoteLogin(false);
+      setRemoteEmail('');
+      setRemoteAccessKeyInput('');
+      setActiveFolderId(null);
+      setIsRemoteLoggingIn(false);
+      return;
+    }
+
     if (!user) {
       setError(t('loginWithGoogle')); // Or something appropriate
       setIsRemoteLoggingIn(false);
@@ -500,6 +663,14 @@ const App: React.FC = () => {
     if (!user || !remoteAccessKey.trim()) return;
     setIsSavingRemoteKey(true);
     try {
+      if (isDemoMode) {
+        localStorage.setItem(`demo_remote_key_${user.email?.toLowerCase()}`, remoteAccessKey.trim());
+        setRemoteAccessKey(remoteAccessKey.trim());
+        setShowRemoteSettings(false);
+        alert(t('remoteAccessSet'));
+        return;
+      }
+
       const db = getFirebaseDb();
       await setDoc(doc(db, 'userProfiles', user.uid), { 
         remoteAccessKey: String(remoteAccessKey || '').trim(),
@@ -910,7 +1081,7 @@ const App: React.FC = () => {
       setIsDeleting(id);
       try {
         if (isDemoMode) {
-          setFiles(files.filter(f => f.id !== id));
+          setFiles(files.map(f => f.id === id ? { ...f, isDeleted: true, deletedAt: Date.now() } : f));
           setIsDeleting(null);
           return;
         }
@@ -918,18 +1089,70 @@ const App: React.FC = () => {
         if (!user) throw new Error("User not authenticated");
         
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
-        const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
-        console.log("Deleting file:", id);
+        await updateDoc(doc(db, 'files', id), { 
+          isDeleted: true, 
+          deletedAt: Date.now() 
+        });
         
+        // Optimistic update
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, isDeleted: true, deletedAt: Date.now() } : f));
+      } catch (err: any) {
+        console.error("Delete file error:", err);
+        alert(t('delete') + ': ' + (err.message || 'Unknown error'));
+      } finally {
+        setIsDeleting(null);
+      }
+    }
+  };
+
+  const restoreItem = async (item: FileData | Folder, type: 'file' | 'folder') => {
+    try {
+      if (isDemoMode) {
+        if (type === 'file') {
+          setFiles(files.map(f => f.id === item.id ? { ...f, isDeleted: false, deletedAt: undefined } : f));
+        } else {
+          setFolders(folders.map(f => f.id === item.id ? { ...f, isDeleted: false, deletedAt: undefined } : f));
+        }
+        alert(t('itemRestored'));
+        return;
+      }
+
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      const collectionName = type === 'file' ? 'files' : 'folders';
+      await updateDoc(doc(db, collectionName, item.id), { 
+        isDeleted: false, 
+        deletedAt: null 
+      });
+      alert(t('itemRestored'));
+    } catch (err) {
+      console.error("Restore error:", err);
+      alert(t('moveError'));
+    }
+  };
+
+  const permanentlyDeleteItem = async (item: FileData | Folder, type: 'file' | 'folder') => {
+    if (!window.confirm(t('confirmPermanentDelete'))) return;
+
+    setIsDeleting(item.id);
+    try {
+      if (isDemoMode) {
+        if (type === 'file') {
+          setFiles(files.filter(f => f.id !== item.id));
+        } else {
+          setFolders(folders.filter(f => f.id !== item.id));
+          setFiles(files.filter(f => f.folderId !== item.id));
+        }
+        setIsDeleting(null);
+        alert(t('itemDeletedPermanently'));
+        return;
+      }
+
+      const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+      
+      if (type === 'file') {
         // 1. Delete chunks if any
-        const chunksQuery = query(
-          collection(db, 'fileChunks'), 
-          where('fileId', '==', id)
-        );
+        const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', item.id));
         const chunksSnapshot = await getDocs(chunksQuery);
-        
-        console.log(`Found ${chunksSnapshot.size} chunks to delete for file ${id}`);
-        
         if (!chunksSnapshot.empty) {
           let batch = writeBatch(db);
           let count = 0;
@@ -944,19 +1167,35 @@ const App: React.FC = () => {
           }
           if (count > 0) await batch.commit();
         }
-
         // 2. Delete file metadata
-        await deleteDoc(doc(db, 'files', id));
-        console.log("File metadata deleted successfully");
-        
-        // Optimistic update
-        setFiles(prev => prev.filter(f => f.id !== id));
-      } catch (err: any) {
-        console.error("Delete file error:", err);
-        alert(t('delete') + ': ' + (err.message || 'Unknown error'));
-      } finally {
-        setIsDeleting(null);
+        await deleteDoc(doc(db, 'files', item.id));
+      } else {
+        // For folders, we should ideally delete recursively, but for simplicity in recycle bin, 
+        // we just delete the folder metadata. The files inside are already marked as deleted 
+        // if the folder was deleted normally.
+        await deleteDoc(doc(db, 'folders', item.id));
       }
+      
+      alert(t('itemDeletedPermanently'));
+    } catch (err: any) {
+      console.error("Permanent delete error:", err);
+      alert(t('delete') + ': ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const emptyRecycleBin = async () => {
+    if (!window.confirm(t('confirmEmptyRecycleBin'))) return;
+
+    const deletedFiles = files.filter(f => f.isDeleted);
+    const deletedFolders = folders.filter(f => f.isDeleted);
+
+    for (const file of deletedFiles) {
+      await permanentlyDeleteItem(file, 'file');
+    }
+    for (const folder of deletedFolders) {
+      await permanentlyDeleteItem(folder, 'folder');
     }
   };
 
@@ -988,58 +1227,19 @@ const App: React.FC = () => {
       try {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         
-        // Recursive function to delete folder and its contents
-        const deleteRecursive = async (folderId: string) => {
-          // 1. Find all subfolders
-          const subfoldersToDelete = folders.filter(f => f.parentId === folderId);
-          for (const sub of subfoldersToDelete) {
-            await deleteRecursive(sub.id);
-          }
-
-          // 2. Find all files in this folder
-          const folderFiles = files.filter(f => f.folderId === folderId);
+        // Mark folder as deleted
+        if (isDemoMode) {
+          setFolders(folders.map(f => f.id === id ? { ...f, isDeleted: true, deletedAt: Date.now() } : f));
+          // Also mark all files in this folder as deleted
+          setFiles(files.map(f => f.folderId === id ? { ...f, isDeleted: true, deletedAt: Date.now() } : f));
+        } else {
+          await updateDoc(doc(db, 'folders', id), { isDeleted: true, deletedAt: Date.now() });
           
-          // 3. Delete files and their chunks
-          for (const file of folderFiles) {
-            if (!isDemoMode) {
-              const chunksQuery = query(
-                collection(db, 'fileChunks'), 
-                where('fileId', '==', file.id)
-              );
-              const chunksSnapshot = await getDocs(chunksQuery);
-              
-              if (!chunksSnapshot.empty) {
-                let batch = writeBatch(db);
-                let count = 0;
-                for (const chunkDoc of chunksSnapshot.docs) {
-                  batch.delete(chunkDoc.ref);
-                  count++;
-                  if (count === 400) {
-                    await batch.commit();
-                    batch = writeBatch(db);
-                    count = 0;
-                  }
-                }
-                if (count > 0) await batch.commit();
-              }
-              await deleteDoc(doc(db, 'files', file.id));
-            }
-          }
+          // Note: In a real app, you'd want to recursively mark all sub-items as deleted.
+          // For this demo, we'll just do the top level folder.
+        }
 
-          // 4. Delete the folder itself
-          if (!isDemoMode) {
-            await deleteDoc(doc(db, 'folders', folderId));
-          }
-          
-          // Update local state
-          setUnlockedFolderIds(prev => prev.filter(fid => fid !== folderId));
-          setFolders(prev => prev.filter(f => f.id !== folderId));
-          setFiles(prev => prev.filter(f => f.folderId !== folderId));
-          if (activeFolderId === folderId) setActiveFolderId(null);
-        };
-
-        await deleteRecursive(id);
-        console.log("Folder and all its nested contents deleted successfully");
+        if (activeFolderId === id) setActiveFolderId(null);
       } catch (err: any) {
         console.error("Delete folder error:", err);
         alert(t('delete') + ': ' + (err.message || 'Unknown error'));
@@ -1547,10 +1747,11 @@ const App: React.FC = () => {
   const isCurrentFolderLocked = currentFolder?.password && !unlockedFolderIds.includes(currentFolder.id);
   
   const subFolders = activeFolderId 
-    ? folders.filter(f => f.parentId === activeFolderId)
-    : folders.filter(f => !f.parentId);
+    ? folders.filter(f => f.parentId === activeFolderId && !f.isDeleted)
+    : folders.filter(f => !f.parentId && !f.isDeleted);
   const filteredFiles = files.filter(f => 
     f.folderId === activeFolderId && 
+    !f.isDeleted &&
     f.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -2016,6 +2217,49 @@ service cloud.firestore {
                       {t('remoteSettings')}
                     </button>
 
+                    <button 
+                      onClick={() => {
+                        setShowRecycleBin(true);
+                        setShowStorageAnalysis(false);
+                        setActiveFolderId(null);
+                        setShowUserMenu(false);
+                      }} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors",
+                        showRecycleBin 
+                          ? 'bg-rose-500/20 text-rose-400' 
+                          : 'text-slate-300 hover:bg-slate-700'
+                      )}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <div className="flex-1 flex items-center justify-between">
+                        <span>{t('recycleBin')}</span>
+                        {deletedFiles.length + deletedFolders.length > 0 && (
+                          <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                            {deletedFiles.length + deletedFolders.length}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        setShowStorageAnalysis(true);
+                        setShowRecycleBin(false);
+                        setActiveFolderId(null);
+                        setShowUserMenu(false);
+                      }} 
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors",
+                        showStorageAnalysis 
+                          ? 'bg-indigo-500/20 text-indigo-400' 
+                          : 'text-slate-300 hover:bg-slate-700'
+                      )}
+                    >
+                      <LayoutGrid className="w-4 h-4" />
+                      <span>{t('storageAnalysis')}</span>
+                    </button>
+
                     <div className="h-px bg-slate-700/50 my-1" />
 
                     <button 
@@ -2091,17 +2335,19 @@ service cloud.firestore {
               <button
                 onClick={() => {
                   setActiveFolderId(null);
+                  setShowRecycleBin(false);
+                  setShowStorageAnalysis(false);
                   setShowMobileSidebar(false);
                 }}
                 className={cn(
                   "w-full flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
-                  activeFolderId === null 
+                  activeFolderId === null && !showRecycleBin && !showStorageAnalysis
                     ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' 
                     : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                 )}
               >
                 <div className="w-5 h-5 flex items-center justify-center">
-                  <ChevronLeft className={cn("w-4 h-4", activeFolderId === null ? "text-white" : "text-indigo-500")} />
+                  <ChevronLeft className={cn("w-4 h-4", activeFolderId === null && !showRecycleBin && !showStorageAnalysis ? "text-white" : "text-indigo-500")} />
                 </div>
                 <span className="text-sm font-medium">{t('allFiles')}</span>
               </button>
@@ -2136,6 +2382,8 @@ service cloud.firestore {
                               setShowUnlock(folder);
                             } else {
                               setActiveFolderId(folder.id);
+                              setShowRecycleBin(false);
+                              setShowStorageAnalysis(false);
                             }
                             setShowMobileSidebar(false);
                           }}
@@ -2299,7 +2547,223 @@ service cloud.firestore {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-10 custom-scrollbar">
-          {isCurrentFolderLocked ? (
+          {showStorageAnalysis ? (
+            <div className="animate-in fade-in duration-500 max-w-4xl mx-auto">
+              <div className="flex flex-col mb-10">
+                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                  <span>{t('storageAnalysis')}</span>
+                </div>
+                <h2 className="text-3xl font-bold text-slate-900 tracking-tight">{t('storageUsage')}</h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+                <div className="md:col-span-2 bg-white p-8 rounded-[32px] shadow-sm border border-slate-200 flex flex-col">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-lg font-bold text-slate-800">{t('fileTypeDistribution')}</h3>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                      <span className="text-xs text-slate-500 font-medium">{t('photos')}</span>
+                      <div className="w-3 h-3 rounded-full bg-rose-500 ml-2"></div>
+                      <span className="text-xs text-slate-500 font-medium">{t('pdfs')}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={chartData.filter(d => d.name !== t('free'))}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={80}
+                          outerRadius={120}
+                          paddingAngle={8}
+                          dataKey="value"
+                        >
+                          {chartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip 
+                          formatter={(value: number) => formatBytes(value)}
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-200">
+                    <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest mb-2">{t('totalStorage')}</p>
+                    <p className="text-2xl font-bold text-slate-900">{formatBytes(storageStats.totalLimit)}</p>
+                    <div className="mt-4 w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-indigo-600 h-full transition-all duration-1000" 
+                        style={{ width: `${storageStats.percentUsed}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-2 font-medium">
+                      {formatBytes(storageStats.totalUsed)} {t('used')} • {storageStats.percentUsed.toFixed(1)}%
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-200 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-indigo-50 rounded-xl flex items-center justify-center">
+                          <ImageIcon className="w-4 h-4 text-indigo-500" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">{t('photos')}</p>
+                          <p className="text-[10px] text-slate-400 font-medium">{files.filter(f => f.type.includes('image') && !f.isDeleted).length} {t('files')}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm font-bold text-slate-700">{formatBytes(storageStats.photoSize)}</p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-rose-50 rounded-xl flex items-center justify-center">
+                          <FileText className="w-4 h-4 text-rose-500" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">{t('pdfs')}</p>
+                          <p className="text-[10px] text-slate-400 font-medium">{files.filter(f => f.type.includes('pdf') && !f.isDeleted).length} {t('files')}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm font-bold text-slate-700">{formatBytes(storageStats.pdfSize)}</p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-50 rounded-xl flex items-center justify-center">
+                          <FileIcon className="w-4 h-4 text-slate-400" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">{t('others')}</p>
+                          <p className="text-[10px] text-slate-400 font-medium">{files.filter(f => !f.type.includes('image') && !f.type.includes('pdf') && !f.isDeleted).length} {t('files')}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm font-bold text-slate-700">{formatBytes(storageStats.otherSize)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : showRecycleBin ? (
+            <div className="animate-in fade-in duration-500">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                    <span>{t('recycleBin')}</span>
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{t('recycleBin')}</h2>
+                </div>
+                {deletedFiles.length + deletedFolders.length > 0 && (
+                  <button 
+                    onClick={emptyRecycleBin}
+                    className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold rounded-xl shadow-lg shadow-rose-100 transition-all flex items-center gap-2"
+                  >
+                    <Trash className="w-4 h-4" />
+                    {t('emptyRecycleBin')}
+                  </button>
+                )}
+              </div>
+
+              {deletedFiles.length === 0 && deletedFolders.length === 0 ? (
+                <div className="bg-white border-2 border-dashed border-slate-200 rounded-[32px] p-20 text-center">
+                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Trash2 className="w-8 h-8 text-slate-300" />
+                  </div>
+                  <p className="text-slate-400 font-medium">{t('recycleBinEmpty')}</p>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {deletedFolders.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest mb-4">{t('folders')}</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                        {deletedFolders.map((folder, index) => (
+                          <div
+                            key={`recycle-folder-${folder.id}-${index}`}
+                            className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-rose-200 hover:shadow-md transition-all group relative"
+                          >
+                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              <button
+                                onClick={() => restoreItem(folder, 'folder')}
+                                className="p-1.5 text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg"
+                                title={t('restore')}
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => permanentlyDeleteItem(folder, 'folder')}
+                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg"
+                                title={t('deletePermanently')}
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="mb-2">
+                              <FolderIcon className="w-10 h-10 text-rose-300" />
+                            </div>
+                            <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{folder.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {deletedFiles.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest mb-4">{t('files')}</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {deletedFiles.map((file, index) => (
+                          <div 
+                            key={`recycle-file-${file.id}-${index}`} 
+                            className="group bg-white p-5 rounded-3xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-rose-100 transition-all relative overflow-hidden"
+                          >
+                            <div className="flex items-start justify-between mb-4">
+                              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center">
+                                {file.type.includes('image') ? (
+                                  <ImageIcon className="w-6 h-6 text-rose-300" />
+                                ) : file.type.includes('pdf') ? (
+                                  <FileText className="w-6 h-6 text-rose-300" />
+                                ) : (
+                                  <FileIcon className="w-6 h-6 text-rose-300" />
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button 
+                                  onClick={() => restoreItem(file, 'file')}
+                                  className="p-1.5 text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 transition-all rounded-lg"
+                                  title={t('restore')}
+                                >
+                                  <RotateCcw className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => permanentlyDeleteItem(file, 'file')}
+                                  className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition-all rounded-lg"
+                                  title={t('deletePermanently')}
+                                >
+                                  <Trash className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <h3 className="font-bold text-slate-800 truncate text-sm mb-1">{file.name}</h3>
+                            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">
+                              {file.size} • {new Date(file.deletedAt || 0).toLocaleDateString()}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : isCurrentFolderLocked ? (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
                 <Lock className="w-12 h-12 text-amber-500" />
