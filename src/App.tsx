@@ -45,7 +45,8 @@ import {
   Menu,
   Trash,
   RotateCcw,
-  LayoutGrid
+  LayoutGrid,
+  Fingerprint
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -173,6 +174,44 @@ const App: React.FC = () => {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [showRecycleBin, setShowRecycleBin] = useState(false);
   const [showStorageAnalysis, setShowStorageAnalysis] = useState(false);
+  const [biometricEnabledFolders, setBiometricEnabledFolders] = useState<string[]>(() => {
+    const saved = localStorage.getItem('biometric_folders');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('biometric_folders', JSON.stringify(biometricEnabledFolders));
+  }, [biometricEnabledFolders]);
+
+  const handleBiometricUnlock = async (folder: Folder) => {
+    try {
+      if (!window.PublicKeyCredential) {
+        alert(t('biometricNotSupported'));
+        return;
+      }
+
+      setIsPreviewLoading(true);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      setUnlockedFolderIds(prev => [...prev, folder.id]);
+      setShowUnlock(null);
+      setUnlockPassword('');
+      setError('');
+      setIsPreviewLoading(false);
+    } catch (err) {
+      console.error("Biometric error:", err);
+      setError(t('biometricError'));
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const toggleBiometricForFolder = (folderId: string) => {
+    setBiometricEnabledFolders(prev => 
+      prev.includes(folderId) 
+        ? prev.filter(id => id !== folderId) 
+        : [...prev, folderId]
+    );
+  };
 
   const deletedFiles = files.filter(f => f.isDeleted);
   const deletedFolders = folders.filter(f => f.isDeleted);
@@ -218,7 +257,7 @@ const App: React.FC = () => {
     });
 
     const totalUsed = photoSize + pdfSize + otherSize;
-    const totalLimit = 1024 * 1024 * 1024; // 1 GB Limit for demo
+    const totalLimit = 15 * 1024 * 1024 * 1024; // 15 GB Limit
     
     return {
       photoSize,
@@ -3328,6 +3367,19 @@ service cloud.firestore {
                     {t('lock')}
                   </button>
                 </div>
+
+                <button
+                  onClick={() => toggleBiometricForFolder(showLockFolder.id)}
+                  className={cn(
+                    "w-full mt-4 flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-xs font-bold",
+                    biometricEnabledFolders.includes(showLockFolder.id)
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                      : "bg-slate-50 border-slate-100 text-slate-500 hover:border-indigo-200"
+                  )}
+                >
+                  <Fingerprint className="w-4 h-4" />
+                  {biometricEnabledFolders.includes(showLockFolder.id) ? t('biometricEnabled') : t('enableBiometric')}
+                </button>
               </div>
             </motion.div>
           </div>
@@ -3446,6 +3498,21 @@ service cloud.firestore {
               />
               
               {error && <p className="text-rose-500 text-xs mb-4 flex items-center justify-center gap-1"><AlertCircle className="w-3 h-3" /> {error}</p>}
+              
+              {biometricEnabledFolders.includes(showUnlock.id) && (
+                <button
+                  onClick={() => handleBiometricUnlock(showUnlock)}
+                  disabled={isPreviewLoading}
+                  className="w-full mb-4 flex items-center justify-center gap-2 p-4 bg-emerald-50 border-2 border-emerald-100 text-emerald-600 rounded-2xl font-bold hover:bg-emerald-100 transition-all disabled:opacity-50"
+                >
+                  {isPreviewLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Fingerprint className="w-5 h-5" />
+                  )}
+                  {t('useBiometrics')}
+                </button>
+              )}
               
               <button 
                 onClick={handleUnlock}

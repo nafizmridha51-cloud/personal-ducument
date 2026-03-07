@@ -219,7 +219,14 @@ export const translations = {
     used: "ব্যবহৃত",
     free: "খালি",
     storageUsage: "স্টোরেজ ব্যবহার",
-    fileTypeDistribution: "ফাইলের ধরন অনুযায়ী বিভাজন"
+    fileTypeDistribution: "ফাইলের ধরন অনুযায়ী বিভাজন",
+    biometricUnlock: "বায়োমেট্রিক আনলক",
+    useBiometrics: "ফিংগারপ্রিন্ট ব্যবহার করুন",
+    biometricNotSupported: "আপনার ডিভাইসে বায়োমেট্রিক সাপোর্ট নেই",
+    biometricSuccess: "বায়োমেট্রিক যাচাই সফল",
+    biometricError: "বায়োমেট্রিক যাচাই ব্যর্থ হয়েছে",
+    enableBiometric: "বায়োমেট্রিক লক চালু করুন",
+    biometricEnabled: "এই ফোল্ডারের জন্য বায়োমেট্রিক লক চালু করা হয়েছে"
   },
   en: {
     appName: "Secure Doc Vault",
@@ -440,6 +447,13 @@ export const translations = {
     used: "Used",
     free: "Free",
     storageUsage: "Storage Usage",
-    fileTypeDistribution: "File Type Distribution"
+    fileTypeDistribution: "File Type Distribution",
+    biometricUnlock: "Biometric Unlock",
+    useBiometrics: "Use Fingerprint",
+    biometricNotSupported: "Biometric not supported on this device",
+    biometricSuccess: "Biometric verification successful",
+    biometricError: "Biometric verification failed",
+    enableBiometric: "Enable Biometric Lock",
+    biometricEnabled: "Biometric lock enabled for this folder"
   }
 };
