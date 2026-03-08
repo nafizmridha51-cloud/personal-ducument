@@ -932,21 +932,30 @@ const App: React.FC = () => {
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !activeFolderId || !user) return;
+    const filesToUpload = Array.from(event.target.files || []) as File[];
+    if (filesToUpload.length === 0 || !activeFolderId || !user) return;
 
-    if (file.size > 50 * 1024 * 1024) {
-      alert(t('fileSizeError'));
-      return;
+    // Check sizes first
+    for (const file of filesToUpload) {
+      if (file.size > 50 * 1024 * 1024) {
+        alert(`${file.name}: ${t('fileSizeError')}`);
+        return;
+      }
     }
 
     setIsUploading(true);
     
     if (isDemoMode) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64Data = e.target?.result as string;
-        const newFile: FileData = {
+      const newFiles: FileData[] = [];
+      
+      for (const file of filesToUpload) {
+        const base64Data = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.readAsDataURL(file);
+        });
+
+        newFiles.push({
           id: Math.random().toString(36).substr(2, 9),
           name: file.name,
           type: file.type,
@@ -956,96 +965,100 @@ const App: React.FC = () => {
           uploadDate: new Date().toLocaleDateString('bn-BD'),
           dataUrl: base64Data,
           isChunked: false
-        };
-        setFiles([...files, newFile]);
-        setShowUpload(false);
-        setIsUploading(false);
-      };
-      reader.readAsDataURL(file);
+        });
+      }
+
+      setFiles([...files, ...newFiles]);
+      setShowUpload(false);
+      setIsUploading(false);
       return;
     }
 
-    let fileDocRef: any = null;
     try {
       const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
-      
-      // Read file as base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      
-      const fullBase64 = await base64Promise;
-      
-      // Chunk size: 700KB (to stay safe within 1MB Firestore limit)
-      const CHUNK_SIZE = 700 * 1024;
-      const chunks: string[] = [];
-      for (let i = 0; i < fullBase64.length; i += CHUNK_SIZE) {
-        chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
-      }
 
-      console.log(`Uploading file in ${chunks.length} chunks...`);
+      for (const file of filesToUpload) {
+        let fileDocRef: any = null;
+        try {
+          // Read file as base64
+          const reader = new FileReader();
+          const base64Promise = new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          
+          const fullBase64 = await base64Promise;
+          
+          // Chunk size: 700KB (to stay safe within 1MB Firestore limit)
+          const CHUNK_SIZE = 700 * 1024;
+          const chunks: string[] = [];
+          for (let i = 0; i < fullBase64.length; i += CHUNK_SIZE) {
+            chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
+          }
 
-      // 1. Save metadata to Firestore
-      const fileDoc = await addDoc(collection(db, 'files'), {
-        name: file.name,
-        type: file.type,
-        size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
-        folderId: activeFolderId,
-        userId: currentUserId,
-        uploadDate: new Date().toLocaleDateString('bn-BD'),
-        dataUrl: 'CHUNKED',
-        isChunked: true,
-        chunkCount: chunks.length,
-        createdAt: serverTimestamp()
-      });
-      
-      fileDocRef = fileDoc;
+          console.log(`Uploading ${file.name} in ${chunks.length} chunks...`);
 
-      // 2. Save chunks to Firestore
-      let currentBatch = writeBatch(db);
-      let count = 0;
-      
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkRef = doc(collection(db, 'fileChunks'));
-        currentBatch.set(chunkRef, {
-          fileId: fileDoc.id,
-          index: i,
-          data: chunks[i],
-          userId: currentUserId
-        });
-        count++;
-        
-        if (count === 400) {
-          await currentBatch.commit();
-          currentBatch = writeBatch(db);
-          count = 0;
+          // 1. Save metadata to Firestore
+          const fileDoc = await addDoc(collection(db, 'files'), {
+            name: file.name,
+            type: file.type,
+            size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+            folderId: activeFolderId,
+            userId: currentUserId,
+            uploadDate: new Date().toLocaleDateString('bn-BD'),
+            dataUrl: 'CHUNKED',
+            isChunked: true,
+            chunkCount: chunks.length,
+            createdAt: serverTimestamp()
+          });
+          
+          fileDocRef = fileDoc;
+
+          // 2. Save chunks to Firestore
+          let currentBatch = writeBatch(db);
+          let count = 0;
+          
+          for (let i = 0; i < chunks.length; i++) {
+            const chunkRef = doc(collection(db, 'fileChunks'));
+            currentBatch.set(chunkRef, {
+              fileId: fileDoc.id,
+              index: i,
+              data: chunks[i],
+              userId: currentUserId
+            });
+            count++;
+            
+            if (count === 400) {
+              await currentBatch.commit();
+              currentBatch = writeBatch(db);
+              count = 0;
+            }
+          }
+          
+          if (count > 0) {
+            await currentBatch.commit();
+          }
+          
+          console.log(`File ${file.name} uploaded successfully.`);
+        } catch (fileErr: any) {
+          console.error(`Upload failed for ${file.name}:`, fileErr);
+          // Cleanup: Delete metadata if chunks failed
+          if (fileDocRef) {
+            try {
+              await deleteDoc(fileDocRef);
+            } catch (cleanupErr) {
+              console.error("Failed to cleanup file metadata:", cleanupErr);
+            }
+          }
+          throw fileErr; // Stop all uploads if one fails
         }
       }
-      
-      if (count > 0) {
-        await currentBatch.commit();
-      }
-      
-      console.log("File and chunks uploaded successfully.");
+
       setShowUpload(false);
     } catch (err: any) {
-      console.error("Upload failed:", err);
-      
-      // Cleanup: Delete metadata if chunks failed
-      if (fileDocRef) {
-        try {
-          const db = getFirebaseDb();
-          await deleteDoc(fileDocRef);
-          console.log("Cleaned up file metadata after failed chunk upload.");
-        } catch (cleanupErr) {
-          console.error("Failed to cleanup file metadata:", cleanupErr);
-        }
-      }
-
+      console.error("Upload process failed:", err);
       if (err.code === 'permission-denied') {
         alert(t('permissionError'));
       } else {
@@ -3519,7 +3532,7 @@ service cloud.firestore {
                   onClick={() => fileInputRef.current?.click()}
                   className="border-2 border-dashed border-slate-200 rounded-3xl p-10 text-center hover:bg-slate-50 cursor-pointer transition-all group"
                 >
-                  <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+                  <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileUpload} multiple />
                   <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
                     <Plus className="w-6 h-6 text-indigo-600" />
                   </div>
