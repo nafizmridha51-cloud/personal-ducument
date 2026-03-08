@@ -82,6 +82,7 @@ import { translations } from './translations';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Settings, Info } from 'lucide-react';
+import PDFViewer from './components/PDFViewer';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -3831,10 +3832,9 @@ service cloud.firestore {
                     referrerPolicy="no-referrer"
                   />
                 ) : showPreview.type.includes('pdf') ? (
-                  <iframe 
-                    src={pdfUrl || showPreview.dataUrl} 
-                    title={showPreview.name}
-                    className="w-full h-[70vh] rounded-2xl border-none"
+                  <PDFViewer 
+                    url={pdfUrl || showPreview.dataUrl} 
+                    fileName={showPreview.name}
                   />
                 ) : (
                   <div className="p-10 text-center">
