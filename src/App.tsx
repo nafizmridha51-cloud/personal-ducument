@@ -183,8 +183,15 @@ const App: React.FC = () => {
     localStorage.setItem('biometric_folders', JSON.stringify(biometricEnabledFolders));
   }, [biometricEnabledFolders]);
 
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
   const handleBiometricUnlock = async (folder: Folder) => {
     try {
+      if (!isMobile) {
+        alert("This feature is only available on mobile devices.");
+        return;
+      }
+
       if (!window.PublicKeyCredential) {
         alert(t('biometricNotSupported'));
         return;
@@ -198,7 +205,7 @@ const App: React.FC = () => {
 
       setIsPreviewLoading(true);
       
-      // Trigger native biometric prompt
+      // Real WebAuthn trigger to force system biometric prompt
       const challenge = new Uint8Array(32);
       window.crypto.getRandomValues(challenge);
       
@@ -206,38 +213,34 @@ const App: React.FC = () => {
       window.crypto.getRandomValues(userId);
 
       try {
-        // We try to "get" a credential. Since we don't store credential IDs on a server,
-        // we'll use a slightly different approach for this local-only vault.
-        // We'll use a mock success if the browser's native prompt would have been triggered.
-        // In a real production app, you'd store the credentialId in Firestore.
-        
-        // For this demo, we'll simulate the native prompt delay and success
-        // but we'll use a more realistic interaction.
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // If we were to use real WebAuthn, it would look like this:
-        /*
-        await navigator.credentials.get({
+        // Using 'create' as a way to trigger the biometric prompt for verification
+        // in a serverless environment. This forces the OS to show the fingerprint/face prompt.
+        await navigator.credentials.create({
           publicKey: {
             challenge,
-            allowCredentials: [], // This would need the stored credential ID
-            userVerification: "required"
+            rp: { name: "Secure Doc Vault" },
+            user: {
+              id: userId,
+              name: user?.email || "user",
+              displayName: user?.displayName || "User"
+            },
+            pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+            authenticatorSelection: {
+              authenticatorAttachment: "platform",
+              userVerification: "required"
+            },
+            timeout: 60000
           }
         });
-        */
 
         setUnlockedFolderIds(prev => [...prev, folder.id]);
         setShowUnlock(null);
         setUnlockPassword('');
         setError('');
         setIsPreviewLoading(false);
-        
-        // Show success toast/alert
-        const successMsg = t('biometricSuccess');
-        console.log(successMsg);
       } catch (e) {
         console.error("Native biometric failed:", e);
-        setError(t('biometricError'));
+        // If user cancels, don't show error, just stop loading
         setIsPreviewLoading(false);
       }
     } catch (err) {
@@ -252,6 +255,11 @@ const App: React.FC = () => {
     
     if (isEnabling) {
       try {
+        if (!isMobile) {
+          alert("This feature is only available on mobile devices.");
+          return;
+        }
+
         if (!window.PublicKeyCredential) {
           alert(t('biometricNotSupported'));
           return;
@@ -263,15 +271,36 @@ const App: React.FC = () => {
           return;
         }
 
-        // Trigger native prompt for "registration"
         setIsPreviewLoading(true);
-        await new Promise(resolve => setTimeout(resolve, 800));
-        setIsPreviewLoading(false);
         
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const userId = new Uint8Array(16);
+        window.crypto.getRandomValues(userId);
+
+        // Trigger native prompt for registration
+        await navigator.credentials.create({
+          publicKey: {
+            challenge,
+            rp: { name: "Secure Doc Vault" },
+            user: {
+              id: userId,
+              name: user?.email || "user",
+              displayName: user?.displayName || "User"
+            },
+            pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+            authenticatorSelection: {
+              authenticatorAttachment: "platform",
+              userVerification: "required"
+            }
+          }
+        });
+
+        setIsPreviewLoading(false);
         setBiometricEnabledFolders(prev => [...prev, folderId]);
       } catch (err) {
         console.error("Error enabling biometrics:", err);
-        alert(t('biometricError'));
+        setIsPreviewLoading(false);
       }
     } else {
       setBiometricEnabledFolders(prev => prev.filter(id => id !== folderId));
@@ -3229,15 +3258,17 @@ service cloud.firestore {
                     </div>
                   </div>
 
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <div className="flex items-center gap-3 mb-2">
-                      <Fingerprint className="w-5 h-5 text-indigo-600" />
-                      <h4 className="text-sm font-bold text-slate-800">{t('biometricUnlock')}</h4>
+                  {isMobile && (
+                    <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-3 mb-2">
+                        <Fingerprint className="w-5 h-5 text-indigo-600" />
+                        <h4 className="text-sm font-bold text-slate-800">{t('biometricUnlock')}</h4>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        {t('biometricUnlockDesc')}
+                      </p>
                     </div>
-                    <p className="text-[10px] text-slate-500 leading-relaxed">
-                      {t('biometricUnlockDesc')}
-                    </p>
-                  </div>
+                  )}
 
                   <div className="flex gap-3 pt-2">
                     <button 
@@ -3448,18 +3479,20 @@ service cloud.firestore {
                   </button>
                 </div>
 
-                <button
-                  onClick={() => toggleBiometricForFolder(showLockFolder.id)}
-                  className={cn(
-                    "w-full mt-4 flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-xs font-bold",
-                    biometricEnabledFolders.includes(showLockFolder.id)
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-600"
-                      : "bg-slate-50 border-slate-100 text-slate-500 hover:border-indigo-200"
-                  )}
-                >
-                  <Fingerprint className="w-4 h-4" />
-                  {biometricEnabledFolders.includes(showLockFolder.id) ? t('biometricEnabled') : t('enableBiometric')}
-                </button>
+                {isMobile && (
+                  <button
+                    onClick={() => toggleBiometricForFolder(showLockFolder.id)}
+                    className={cn(
+                      "w-full mt-4 flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-xs font-bold",
+                      biometricEnabledFolders.includes(showLockFolder.id)
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                        : "bg-slate-50 border-slate-100 text-slate-500 hover:border-indigo-200"
+                    )}
+                  >
+                    <Fingerprint className="w-4 h-4" />
+                    {biometricEnabledFolders.includes(showLockFolder.id) ? t('biometricEnabled') : t('enableBiometric')}
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>
@@ -3579,7 +3612,7 @@ service cloud.firestore {
               
               {error && <p className="text-rose-500 text-xs mb-4 flex items-center justify-center gap-1"><AlertCircle className="w-3 h-3" /> {error}</p>}
               
-              {biometricEnabledFolders.includes(showUnlock.id) && (
+              {isMobile && biometricEnabledFolders.includes(showUnlock.id) && (
                 <button
                   onClick={() => handleBiometricUnlock(showUnlock)}
                   disabled={isPreviewLoading}
