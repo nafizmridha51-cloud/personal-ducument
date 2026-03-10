@@ -706,6 +706,8 @@ const App: React.FC = () => {
           console.error("Error fetching remote history:", err);
           if (err.code === 'permission-denied') {
             setPermissionError(t('permissionError'));
+            // Also show a more specific alert for this common issue
+            setError("Firestore Permission Error: Please update your Security Rules in the Firebase Console to allow reading 'remoteAccessHistory'.");
           }
         }
       };
