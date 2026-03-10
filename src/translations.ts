@@ -227,7 +227,11 @@ export const translations = {
     biometricSuccess: "বায়োমেট্রিক যাচাই সফল",
     biometricError: "বায়োমেট্রিক যাচাই ব্যর্থ হয়েছে",
     enableBiometric: "বায়োমেট্রিক লক চালু করুন",
-    biometricEnabled: "এই ফোল্ডারের জন্য বায়োমেট্রিক লক চালু করা হয়েছে"
+    biometricEnabled: "এই ফোল্ডারের জন্য বায়োমেট্রিক লক চালু করা হয়েছে",
+    loginHistory: "লগইন হিস্টরি",
+    noHistoryFound: "এখনো কেউ আপনার ভল্ট অ্যাক্সেস করেনি।",
+    accessedBy: "অ্যাক্সেস করেছেন",
+    at: "সময়"
   },
   en: {
     appName: "Secure Doc Vault",
@@ -456,6 +460,10 @@ export const translations = {
     biometricSuccess: "Biometric verification successful",
     biometricError: "Biometric verification failed",
     enableBiometric: "Enable Biometric Lock",
-    biometricEnabled: "Biometric lock enabled for this folder"
+    biometricEnabled: "Biometric lock enabled for this folder",
+    loginHistory: "Login History",
+    noHistoryFound: "No one has accessed your vault yet.",
+    accessedBy: "Accessed by",
+    at: "at"
   }
 };

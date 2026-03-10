@@ -46,7 +46,8 @@ import {
   Trash,
   RotateCcw,
   LayoutGrid,
-  Fingerprint
+  Fingerprint,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -73,6 +74,7 @@ import {
   serverTimestamp,
   getDocs,
   orderBy,
+  limit,
   writeBatch,
   Firestore,
   getDoc
@@ -420,6 +422,7 @@ const App: React.FC = () => {
   const [showRemoteAccessKey, setShowRemoteAccessKey] = useState(false);
   const [isRemoteLoggingIn, setIsRemoteLoggingIn] = useState(false);
   const [isSavingRemoteKey, setIsSavingRemoteKey] = useState(false);
+  const [remoteHistory, setRemoteHistory] = useState<any[]>([]);
   const [remoteAccess, setRemoteAccess] = useState<{
     isActive: boolean;
     user: User | null;
@@ -674,6 +677,39 @@ const App: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (showRemoteSettings && user) {
+      const fetchHistory = async () => {
+        try {
+          if (isDemoMode) {
+            const saved = localStorage.getItem(`demo_remote_history_${user.email?.toLowerCase()}`);
+            if (saved) setRemoteHistory(JSON.parse(saved));
+            else setRemoteHistory([]);
+            return;
+          }
+
+          const db = getFirebaseDb();
+          const historyRef = collection(db, 'remoteAccessHistory');
+          const q = query(
+            historyRef, 
+            where('ownerUid', '==', user.uid),
+            orderBy('timestamp', 'desc'),
+            limit(20)
+          );
+          const snapshot = await getDocs(q);
+          const historyData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setRemoteHistory(historyData);
+        } catch (err) {
+          console.error("Error fetching remote history:", err);
+        }
+      };
+      fetchHistory();
+    }
+  }, [showRemoteSettings, user, isDemoMode]);
+
   const handleRemoteLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -717,6 +753,18 @@ const App: React.FC = () => {
         db: null,
         app: null
       });
+
+      // Save history for demo mode
+      const historyKey = `demo_remote_history_${normalizedEmail}`;
+      const existingHistory = JSON.parse(localStorage.getItem(historyKey) || '[]');
+      const newEntry = {
+        id: Math.random().toString(36).substr(2, 9),
+        accessorEmail: user?.email || 'Anonymous',
+        accessorUid: user?.uid || 'demo_user',
+        timestamp: Date.now()
+      };
+      localStorage.setItem(historyKey, JSON.stringify([newEntry, ...existingHistory].slice(0, 20)));
+
       sessionStorage.setItem('remote_session_active', 'true');
       setShowRemoteLogin(false);
       setRemoteEmail('');
@@ -774,6 +822,20 @@ const App: React.FC = () => {
         db: db,
         app: null
       });
+
+      // Save history to Firestore
+      try {
+        await addDoc(collection(db, 'remoteAccessHistory'), {
+          ownerUid: targetUid,
+          ownerEmail: profileData.email || remoteEmail,
+          accessorUid: user.uid,
+          accessorEmail: user.email,
+          timestamp: Date.now()
+        });
+      } catch (historyErr) {
+        console.error("Failed to save remote access history:", historyErr);
+      }
+
       sessionStorage.setItem('remote_session_active', 'true');
       setShowRemoteLogin(false);
       setRemoteEmail('');
@@ -2103,6 +2165,47 @@ const App: React.FC = () => {
                     <span className="font-bold">{t('securityTip')}:</span> {t('securityTipDesc')}
                   </p>
                 </div>
+
+                {/* Login History Section */}
+                {!remoteAccess.isActive && (
+                  <div className="mt-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <History className="w-4 h-4 text-slate-400" />
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t('loginHistory')}</h4>
+                    </div>
+                    <div className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
+                      {remoteHistory.length > 0 ? (
+                        <div className="divide-y divide-slate-100">
+                          {remoteHistory.map((item) => (
+                            <div key={item.id} className="p-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2 overflow-hidden">
+                                <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center flex-shrink-0 border border-slate-100">
+                                  <UserIcon className="w-3 h-3 text-slate-400" />
+                                </div>
+                                <div className="overflow-hidden">
+                                  <p className="text-[11px] font-bold text-slate-700 truncate">{item.accessorEmail}</p>
+                                  <p className="text-[9px] text-slate-400">{t('accessedBy')}</p>
+                                </div>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-[10px] font-medium text-slate-500">
+                                  {new Date(item.timestamp).toLocaleDateString()}
+                                </p>
+                                <p className="text-[9px] text-slate-400">
+                                  {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-8 text-center">
+                          <p className="text-xs text-slate-400">{t('noHistoryFound')}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <button 
                   type="submit"
