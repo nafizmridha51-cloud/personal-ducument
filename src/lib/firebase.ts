@@ -45,6 +45,7 @@ export const getFirebaseDb = () => {
     // Force long polling to avoid "WebChannelConnection transport errored" in restricted networks
     db = initializeFirestore(getFirebaseApp(), {
       experimentalForceLongPolling: true,
+      useFetchStreams: false,
     });
   }
   return db;
@@ -80,6 +81,7 @@ export const getSecondaryAuthAndDb = async (email: string, pass: string) => {
     const secondaryAuth = getAuth(secondaryApp);
     const secondaryDb = initializeFirestore(secondaryApp, {
       experimentalForceLongPolling: true,
+      useFetchStreams: false,
     });
     
     const result = await signInWithEmailAndPassword(secondaryAuth, email, pass);
@@ -92,7 +94,10 @@ export const getSecondaryAuthAndDb = async (email: string, pass: string) => {
 
 export const closeSecondaryApp = async (app: FirebaseApp) => {
   try {
-    const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+    const db = initializeFirestore(app, { 
+      experimentalForceLongPolling: true,
+      useFetchStreams: false 
+    });
     await terminate(db);
     const auth = getAuth(app);
     await signOut(auth);

@@ -702,8 +702,11 @@ const App: React.FC = () => {
             ...doc.data()
           }));
           setRemoteHistory(historyData);
-        } catch (err) {
+        } catch (err: any) {
           console.error("Error fetching remote history:", err);
+          if (err.code === 'permission-denied') {
+            setPermissionError(t('permissionError'));
+          }
         }
       };
       fetchHistory();
@@ -2338,6 +2341,12 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
+
+    // ৫. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
+    match /remoteAccessHistory/{historyId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
+      allow create: if request.auth != null;
+    }
   }
 }`;
                         navigator.clipboard.writeText(code);
@@ -2378,6 +2387,12 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ৫. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
+    match /remoteAccessHistory/{historyId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
+      allow create: if request.auth != null;
     }
   }
 }`}
