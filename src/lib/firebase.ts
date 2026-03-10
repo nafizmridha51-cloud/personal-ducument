@@ -55,11 +55,8 @@ export const getFirebaseDb = () => {
 };
 
 export const googleProvider = new GoogleAuthProvider();
-// Use 'select_account' to ensure the account selection screen appears automatically
-// if the user has multiple accounts, or it will use the default session if only one.
-googleProvider.setCustomParameters({
-  prompt: 'select_account'
-});
+// Removed 'select_account' prompt to allow for a more automatic login experience.
+// Google will now use the existing session if available.
 
 export const loginWithGoogle = async () => {
   try {
