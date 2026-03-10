@@ -690,24 +690,51 @@ const App: React.FC = () => {
 
           const db = getFirebaseDb();
           const historyRef = collection(db, 'remoteAccessHistory');
+          // Simplified query to avoid requiring a composite index
           const q = query(
             historyRef, 
-            where('ownerUid', '==', user.uid),
-            orderBy('timestamp', 'desc'),
-            limit(20)
+            where('ownerUid', '==', user.uid)
           );
           const snapshot = await getDocs(q);
           const historyData = snapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
-          }));
+          }))
+          // Sort client-side to bypass index requirement
+          .sort((a: any, b: any) => {
+            const timeA = a.timestamp?.seconds || 0;
+            const timeB = b.timestamp?.seconds || 0;
+            return timeB - timeA;
+          })
+          .slice(0, 20);
+
           setRemoteHistory(historyData);
         } catch (err: any) {
           console.error("Error fetching remote history:", err);
           if (err.code === 'permission-denied') {
             setPermissionError(t('permissionError'));
-            // Also show a more specific alert for this common issue
-            setError("Firestore Permission Error: Please update your Security Rules in the Firebase Console to allow reading 'remoteAccessHistory'.");
+            setError("Firestore Permission Error: Please update your Security Rules in the Firebase Console.");
+          } else if (err.message?.includes('requires an index')) {
+            // Extract the link from the error message if possible
+            const match = err.message.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+            const indexLink = match ? match[0] : null;
+            
+            setError(
+              <div>
+                <p className="font-bold text-red-400 mb-2">Firestore Index Required</p>
+                <p className="text-xs mb-3">Remote history query needs a composite index. Please click the button below to create it in your Firebase Console.</p>
+                {indexLink && (
+                  <a 
+                    href={indexLink} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors"
+                  >
+                    Create Index Now
+                  </a>
+                )}
+              </div>
+            );
           }
         }
       };
