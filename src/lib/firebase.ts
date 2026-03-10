@@ -1,6 +1,6 @@
 
 import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth, signInWithEmailAndPassword, deleteUser } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth, signInWithEmailAndPassword, deleteUser, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { initializeFirestore, Firestore, terminate } from "firebase/firestore";
 
 export const firebaseConfig = {
@@ -36,6 +36,10 @@ const getFirebaseApp = () => {
 export const getFirebaseAuth = () => {
   if (!auth) {
     auth = getAuth(getFirebaseApp());
+    // Set persistence to local so the session is remembered across browser restarts
+    setPersistence(auth, browserLocalPersistence).catch(err => {
+      console.error("Error setting persistence:", err);
+    });
   }
   return auth;
 };
@@ -45,13 +49,17 @@ export const getFirebaseDb = () => {
     // Force long polling to avoid "WebChannelConnection transport errored" in restricted networks
     db = initializeFirestore(getFirebaseApp(), {
       experimentalForceLongPolling: true,
-      useFetchStreams: false,
     });
   }
   return db;
 };
 
 export const googleProvider = new GoogleAuthProvider();
+// Use 'select_account' to ensure the account selection screen appears automatically
+// if the user has multiple accounts, or it will use the default session if only one.
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
 
 export const loginWithGoogle = async () => {
   try {
@@ -81,7 +89,6 @@ export const getSecondaryAuthAndDb = async (email: string, pass: string) => {
     const secondaryAuth = getAuth(secondaryApp);
     const secondaryDb = initializeFirestore(secondaryApp, {
       experimentalForceLongPolling: true,
-      useFetchStreams: false,
     });
     
     const result = await signInWithEmailAndPassword(secondaryAuth, email, pass);
@@ -96,7 +103,6 @@ export const closeSecondaryApp = async (app: FirebaseApp) => {
   try {
     const db = initializeFirestore(app, { 
       experimentalForceLongPolling: true,
-      useFetchStreams: false 
     });
     await terminate(db);
     const auth = getAuth(app);

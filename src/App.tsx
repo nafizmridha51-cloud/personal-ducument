@@ -835,8 +835,11 @@ const App: React.FC = () => {
           accessorEmail: user.email,
           timestamp: Date.now()
         });
-      } catch (historyErr) {
+      } catch (historyErr: any) {
         console.error("Failed to save remote access history:", historyErr);
+        if (historyErr.code === 'permission-denied') {
+          setPermissionError(t('permissionError'));
+        }
       }
 
       sessionStorage.setItem('remote_session_active', 'true');
@@ -1974,6 +1977,7 @@ const App: React.FC = () => {
         {showRemoteLogin && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="remote-login-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -2080,6 +2084,7 @@ const App: React.FC = () => {
         {showRemoteSettings && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="remote-settings-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -2179,8 +2184,8 @@ const App: React.FC = () => {
                     <div className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
                       {remoteHistory.length > 0 ? (
                         <div className="divide-y divide-slate-100">
-                          {remoteHistory.map((item) => (
-                            <div key={item.id} className="p-3 flex items-center justify-between gap-3">
+                          {remoteHistory.map((item, index) => (
+                            <div key={`history-${item.id || index}-${index}`} className="p-3 flex items-center justify-between gap-3">
                               <div className="flex items-center gap-2 overflow-hidden">
                                 <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center flex-shrink-0 border border-slate-100">
                                   <UserIcon className="w-3 h-3 text-slate-400" />
@@ -2242,6 +2247,7 @@ const App: React.FC = () => {
       <AnimatePresence>
         {permissionError && (
           <motion.div
+            key="permission-error-banner"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -2272,6 +2278,7 @@ const App: React.FC = () => {
         {showRulesGuide && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div
+              key="firestore-rules-guide"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -2346,6 +2353,7 @@ service cloud.firestore {
     match /remoteAccessHistory/{historyId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null;
+      allow update, delete: if false;
     }
   }
 }`;
@@ -2393,6 +2401,7 @@ service cloud.firestore {
     match /remoteAccessHistory/{historyId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null;
+      allow update, delete: if false;
     }
   }
 }`}
@@ -2409,6 +2418,7 @@ service cloud.firestore {
       <AnimatePresence>
         {showMobileSidebar && (
           <motion.div
+            key="mobile-sidebar-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -3354,6 +3364,7 @@ service cloud.firestore {
         {showProfileEdit && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div 
+              key="profile-edit-backdrop"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -3361,6 +3372,7 @@ service cloud.firestore {
               onClick={() => setShowProfileEdit(false)}
             />
             <motion.div 
+              key="profile-edit-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -3431,6 +3443,7 @@ service cloud.firestore {
         {movingFile && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div 
+              key="move-file-backdrop"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -3438,6 +3451,7 @@ service cloud.firestore {
               onClick={() => setMovingFile(null)}
             />
             <motion.div 
+              key="move-file-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -3507,6 +3521,7 @@ service cloud.firestore {
         {showAddFolder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="add-folder-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -3568,6 +3583,7 @@ service cloud.firestore {
         {showLockFolder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="lock-folder-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -3634,6 +3650,7 @@ service cloud.firestore {
         {showUpload && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="upload-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -3721,6 +3738,7 @@ service cloud.firestore {
         {showUnlock && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="unlock-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -3795,6 +3813,7 @@ service cloud.firestore {
         {showForgot && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
+              key="forgot-password-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -3929,6 +3948,7 @@ service cloud.firestore {
         {showPreview && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
             <motion.div 
+              key="preview-modal"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
