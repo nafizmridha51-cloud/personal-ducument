@@ -28,6 +28,8 @@ export interface FileData {
   userId: string;
   uploadDate: string;
   dataUrl: string; // Base64 representation or "CHUNKED"
+  thumbnailUrl?: string;
+  thumbnailName?: string;
   isChunked?: boolean;
   chunkCount?: number;
   isDeleted?: boolean;

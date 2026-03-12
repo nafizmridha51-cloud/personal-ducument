@@ -15,6 +15,7 @@ import {
   Unlock, 
   Trash2, 
   Download, 
+  Upload,
   LogOut, 
   Search, 
   MoreVertical, 
@@ -77,7 +78,8 @@ import {
   limit,
   writeBatch,
   Firestore,
-  getDoc
+  getDoc,
+  deleteField
 } from 'firebase/firestore';
 import { User, Folder, FileData } from './types';
 import { translations } from './translations';
@@ -148,6 +150,7 @@ const App: React.FC = () => {
     return localStorage.getItem('is_demo_mode') === 'true';
   });
   const [unlockedFolderIds, setUnlockedFolderIds] = useState<string[]>([]);
+  const [thumbnailModeFileIds, setThumbnailModeFileIds] = useState<string[]>([]);
   
   // Modals
   const [showAddFolder, setShowAddFolder] = useState(false);
@@ -1349,6 +1352,35 @@ const App: React.FC = () => {
     }
   };
 
+  const deleteThumbnail = async (id: string) => {
+    if (window.confirm(t('confirmDeletePhoto'))) {
+      setIsDeleting(id);
+      try {
+        if (isDemoMode) {
+          setFiles(files.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined } : f));
+          setIsDeleting(null);
+          return;
+        }
+        
+        if (!user) throw new Error("User not authenticated");
+        
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        await updateDoc(doc(db, 'files', id), { 
+          thumbnailUrl: deleteField(),
+          thumbnailName: deleteField()
+        });
+        
+        // Optimistic update
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined } : f));
+      } catch (err: any) {
+        console.error("Delete thumbnail error:", err);
+        alert(t('delete') + ': ' + (err.message || 'Unknown error'));
+      } finally {
+        setIsDeleting(null);
+      }
+    }
+  };
+
   const restoreItem = async (item: FileData | Folder, type: 'file' | 'folder') => {
     try {
       if (isDemoMode) {
@@ -1495,24 +1527,79 @@ const App: React.FC = () => {
 
   const renameFile = async (id: string, newName: string) => {
     if (!newName.trim()) return;
+    const isThumbnailMode = thumbnailModeFileIds.includes(id);
     try {
       if (isDemoMode) {
-        setFiles(files.map(f => f.id === id ? { ...f, name: newName } : f));
+        setFiles(files.map(f => f.id === id ? (isThumbnailMode ? { ...f, thumbnailName: newName } : { ...f, name: newName }) : f));
         setEditingFileId(null);
         return;
       }
       
+      const updateData = isThumbnailMode ? { thumbnailName: newName } : { name: newName };
+      
       // Optimistically update local state to keep dataUrl if it was already loaded
-      setFiles(prev => prev.map(f => f.id === id ? { ...f, name: newName } : f));
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updateData } : f));
       
       const db = getFirebaseDb();
-      await updateDoc(doc(db, 'files', id), { name: newName });
+      await updateDoc(doc(db, 'files', id), updateData);
       setEditingFileId(null);
     } catch (err) {
       console.error(err);
       alert(t('rename')); // Error
       // Revert local state on error if needed, but onSnapshot will eventually sync anyway
     }
+  };
+
+  const thumbnailInputRef = useRef<HTMLInputElement>(null);
+  const [activeThumbnailFileId, setActiveThumbnailFileId] = useState<string | null>(null);
+
+  const toggleThumbnailMode = (fileId: string) => {
+    setThumbnailModeFileIds(prev => 
+      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+    );
+  };
+
+  const triggerThumbnailUpload = (fileId: string) => {
+    setActiveThumbnailFileId(fileId);
+    if (thumbnailInputRef.current) {
+      thumbnailInputRef.current.click();
+    }
+  };
+
+  const handleThumbnailUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeThumbnailFileId) return;
+
+    if (file.size > 700 * 1024) {
+      alert(t('photoSizeError'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const dataUrl = event.target?.result as string;
+      try {
+        if (isDemoMode) {
+          setFiles(prev => prev.map(f => f.id === activeThumbnailFileId ? { ...f, thumbnailUrl: dataUrl } : f));
+          setActiveThumbnailFileId(null);
+          // Exit thumbnail mode after upload
+          setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
+          return;
+        }
+
+        const db = getFirebaseDb();
+        await updateDoc(doc(db, 'files', activeThumbnailFileId), { thumbnailUrl: dataUrl });
+        
+        // Exit thumbnail mode after upload
+        setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
+        setActiveThumbnailFileId(null);
+      } catch (err) {
+        console.error("Error uploading thumbnail:", err);
+      }
+    };
+    reader.readAsDataURL(file);
+    // Reset input
+    e.target.value = '';
   };
 
   const renameFolder = async (id: string, newName: string) => {
@@ -1669,6 +1756,30 @@ const App: React.FC = () => {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Link trigger error:", err);
+      alert(t('downloadStartError'));
+    }
+  };
+
+  const downloadThumbnail = (file: FileData) => {
+    if (!file.thumbnailUrl) return;
+    try {
+      const link = document.createElement('a');
+      link.href = file.thumbnailUrl;
+      let downloadName = file.thumbnailName || '';
+      if (!downloadName) {
+        const nameParts = file.name.split('.');
+        if (nameParts.length > 1) nameParts.pop();
+        const baseName = nameParts.join('.');
+        downloadName = `${baseName}-photo.png`;
+      } else if (!downloadName.includes('.')) {
+        downloadName += '.png';
+      }
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error(err);
       alert(t('downloadStartError'));
     }
   };
@@ -3225,32 +3336,47 @@ service cloud.firestore {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {filteredFiles.map((file, index) => (
-                    <motion.div 
-                      layout
-                      key={`main-file-${file.id}-${index}`} 
-                      className="group bg-white p-5 rounded-3xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-indigo-100 transition-all relative overflow-hidden"
-                    >
-                      <div className="flex items-start justify-between mb-4">
-                        <div 
-                          className={cn(
-                            "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all",
-                            (file.type.includes('image') || file.type.includes('pdf')) && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
-                          )}
-                          onClick={() => (file.type.includes('image') || file.type.includes('pdf')) && handlePreview(file)}
-                        >
-                          {file.type.includes('image') ? (
-                            <ImageIcon className="w-6 h-6 text-indigo-500" />
-                          ) : file.type.includes('pdf') ? (
-                            <FileText className="w-6 h-6 text-rose-500" />
-                          ) : (
-                            <FileIcon className="w-6 h-6 text-slate-400" />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {(file.type.includes('image') || file.type.includes('pdf')) && (
+                  {filteredFiles.map((file, index) => {
+                    const isThumbnailMode = thumbnailModeFileIds.includes(file.id);
+                    const hasThumbnail = !!file.thumbnailUrl;
+
+                    return (
+                      <motion.div 
+                        layout
+                        key={`main-file-${file.id}-${index}`} 
+                        className="group bg-white p-5 rounded-3xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-indigo-100 transition-all relative overflow-hidden"
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div 
+                            className={cn(
+                              "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all overflow-hidden relative",
+                              (file.type.includes('image') || file.type.includes('pdf')) && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
+                            )}
+                            onClick={(e) => {
+                              if (file.type.includes('pdf')) {
+                                e.stopPropagation();
+                                toggleThumbnailMode(file.id);
+                              } else {
+                                (file.type.includes('image') || file.type.includes('pdf')) && handlePreview(file);
+                              }
+                            }}
+                          >
+                            {file.type.includes('pdf') ? (
+                              isThumbnailMode ? (
+                                <ImageIcon className="w-6 h-6 text-indigo-500" />
+                              ) : (
+                                <FileText className="w-6 h-6 text-rose-500" />
+                              )
+                            ) : file.type.includes('image') ? (
+                              <ImageIcon className="w-6 h-6 text-indigo-500" />
+                            ) : (
+                              <FileIcon className="w-6 h-6 text-slate-400" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {(file.type.includes('image') || file.type.includes('pdf')) && (
                             <button 
-                              onClick={() => handlePreview(file)}
+                              onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' }) : handlePreview(file)}
                               className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                               title={t('preview')}
                             >
@@ -3267,16 +3393,16 @@ service cloud.firestore {
                             </button>
                           )}
                           <button 
-                            onClick={() => handleShare(file)}
+                            onClick={() => isThumbnailMode && hasThumbnail ? handleShare({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', name: (file.thumbnailName || file.name.split('.')[0]) + '-photo.png' }) : handleShare(file)}
                             className={cn(
                               "p-1.5 transition-all rounded-lg",
                               preparingFileId === file.id 
                                 ? "text-indigo-500 bg-indigo-50" 
-                                : file.dataUrl !== 'CHUNKED' 
+                                : (file.dataUrl !== 'CHUNKED' || (isThumbnailMode && hasThumbnail))
                                   ? "text-emerald-500 bg-emerald-50" 
                                   : "text-slate-300 hover:text-blue-500 hover:bg-blue-50"
                             )}
-                            title={file.dataUrl !== 'CHUNKED' ? t('share') : t('preparing')}
+                            title={(file.dataUrl !== 'CHUNKED' || (isThumbnailMode && hasThumbnail)) ? t('share') : t('preparing')}
                           >
                             {preparingFileId === file.id ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
@@ -3291,7 +3417,7 @@ service cloud.firestore {
                               <button 
                                 onClick={() => {
                                   setEditingFileId(file.id);
-                                  setEditingFileName(file.name);
+                                  setEditingFileName(isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name);
                                 }}
                                 className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                                 title={t('rename')}
@@ -3299,11 +3425,17 @@ service cloud.firestore {
                                 <Pencil className="w-4 h-4" />
                               </button>
                               <button 
-                                onClick={() => deleteFile(file.id)}
-                                disabled={isDeleting === file.id}
+                                onClick={() => {
+                                  if (isThumbnailMode) {
+                                    if (hasThumbnail) deleteThumbnail(file.id);
+                                  } else {
+                                    deleteFile(file.id);
+                                  }
+                                }}
+                                disabled={isDeleting === file.id || (isThumbnailMode && !hasThumbnail)}
                                 className={cn(
                                   "p-1.5 transition-all rounded-lg",
-                                  isDeleting === file.id
+                                  (isDeleting === file.id || (isThumbnailMode && !hasThumbnail))
                                     ? "opacity-50 cursor-not-allowed"
                                     : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
                                 )}
@@ -3320,6 +3452,19 @@ service cloud.firestore {
                       </div>
                       
                       <div className="mb-4">
+                        {isThumbnailMode && hasThumbnail && (
+                          <div className="mb-3 aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 group/thumb relative">
+                            <img 
+                              src={file.thumbnailUrl} 
+                              className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
+                              alt="thumbnail"
+                              onClick={() => handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' })}
+                            />
+                            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                              <Eye className="w-6 h-6 text-white" />
+                            </div>
+                          </div>
+                        )}
                         {editingFileId === file.id ? (
                           <div className="flex items-center gap-2">
                             <input 
@@ -3350,28 +3495,45 @@ service cloud.firestore {
                           <h3 
                             className={cn(
                               "font-bold text-slate-800 truncate text-sm transition-colors",
-                              file.type.includes('image') && "cursor-pointer hover:text-indigo-600"
+                              (file.type.includes('image') || (isThumbnailMode && hasThumbnail)) && "cursor-pointer hover:text-indigo-600"
                             )} 
-                            title={file.name}
-                            onClick={() => file.type.includes('image') && handlePreview(file)}
+                            title={isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name}
+                            onClick={() => {
+                              if (isThumbnailMode && hasThumbnail) {
+                                handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' });
+                              } else if (file.type.includes('image')) {
+                                handlePreview(file);
+                              }
+                            }}
                           >
-                            {file.name}
+                            {isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name}
                           </h3>
                         )}
                         <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-wider">{file.size} • {file.uploadDate}</p>
                       </div>
 
                       <div className="mt-auto pt-2">
-                        <button 
-                          onClick={() => downloadFile(file)}
-                          className="w-full bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          {t('download')}
-                        </button>
+                        {isThumbnailMode && !hasThumbnail ? (
+                          <button 
+                            onClick={() => triggerThumbnailUpload(file.id)}
+                            className="w-full bg-indigo-600 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            {t('upload')}
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => isThumbnailMode ? downloadThumbnail(file) : downloadFile(file)}
+                            className="w-full bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-600 transition-all flex items-center justify-center gap-2"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            {t('download')}
+                          </button>
+                        )}
                       </div>
                     </motion.div>
-                  ))}
+                  );
+                })}
                 </div>
               )}
             </div>
@@ -4045,6 +4207,15 @@ service cloud.firestore {
           </div>
         )}
       </footer>
+
+      {/* Hidden Thumbnail Input */}
+      <input 
+        type="file"
+        ref={thumbnailInputRef}
+        onChange={handleThumbnailUpload}
+        accept="image/*"
+        className="hidden"
+      />
 
       {/* Global Styles */}
       <style>{`
