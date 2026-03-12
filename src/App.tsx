@@ -940,8 +940,8 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Check file size (limit to 700KB for base64 storage in Firestore to stay under 1MB limit)
-    if (file.size > 700 * 1024) {
+    // Check file size (limit to 900KB for base64 storage in Firestore to stay under 1MB limit)
+    if (file.size > 900 * 1024) {
       alert(t('photoSizeError'));
       return;
     }
@@ -977,7 +977,7 @@ const App: React.FC = () => {
         alert(t('photoUpdated'));
       } catch (err) {
         console.error(err);
-        alert(t('photoUpdated')); // Error updating photo
+        alert(t('saveError'));
       } finally {
         setIsUpdatingProfile(false);
       }
@@ -1163,7 +1163,7 @@ const App: React.FC = () => {
       if (err.code === 'permission-denied') {
         alert(t('permissionError'));
       } else {
-        alert(t('newFile') + ': ' + (err.message || 'Unknown error'));
+        alert(t('uploadError'));
       }
     } finally {
       setIsUploading(false);
@@ -1600,7 +1600,7 @@ const App: React.FC = () => {
 
   const handleThumbnailUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !activeThumbnailFileId) return;
+    if (!file || !activeThumbnailFileId || !user) return;
 
     if (file.size > 50 * 1024 * 1024) {
       alert(t('photoSizeError'));
@@ -1620,7 +1620,7 @@ const App: React.FC = () => {
           return;
         }
 
-        const db = getFirebaseDb();
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user?.uid;
 
         // Chunk size: 700KB
@@ -1672,6 +1672,7 @@ const App: React.FC = () => {
         setActiveThumbnailFileId(null);
       } catch (err) {
         console.error("Error uploading thumbnail:", err);
+        alert(t('saveError'));
       } finally {
         setIsUploading(false);
       }
@@ -2603,7 +2604,14 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // ৫. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
+    // ৫. থাম্বনেইল টুকরো (Thumbnail Chunks)
+    match /thumbnailChunks/{chunkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ৬. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
     match /remoteAccessHistory/{historyId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null;
@@ -2651,7 +2659,14 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // ৫. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
+    // ৫. থাম্বনেইল টুকরো (Thumbnail Chunks)
+    match /thumbnailChunks/{chunkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ৬. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
     match /remoteAccessHistory/{historyId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null;
