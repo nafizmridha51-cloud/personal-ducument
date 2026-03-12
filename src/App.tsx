@@ -1357,7 +1357,7 @@ const App: React.FC = () => {
       setIsDeleting(id);
       try {
         if (isDemoMode) {
-          setFiles(files.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined } : f));
+          setFiles(files.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined, isThumbnailChunked: false, thumbnailChunkCount: 0 } : f));
           setIsDeleting(null);
           return;
         }
@@ -1365,13 +1365,26 @@ const App: React.FC = () => {
         if (!user) throw new Error("User not authenticated");
         
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        
+        // 1. Delete chunks if any
+        const chunksQuery = query(collection(db, 'thumbnailChunks'), where('fileId', '==', id));
+        const chunksSnapshot = await getDocs(chunksQuery);
+        if (!chunksSnapshot.empty) {
+          const batch = writeBatch(db);
+          chunksSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+        }
+
+        // 2. Update file metadata
         await updateDoc(doc(db, 'files', id), { 
           thumbnailUrl: deleteField(),
-          thumbnailName: deleteField()
+          thumbnailName: deleteField(),
+          isThumbnailChunked: deleteField(),
+          thumbnailChunkCount: deleteField()
         });
         
         // Optimistic update
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined } : f));
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, thumbnailUrl: undefined, thumbnailName: undefined, isThumbnailChunked: false, thumbnailChunkCount: 0 } : f));
       } catch (err: any) {
         console.error("Delete thumbnail error:", err);
         alert(t('delete') + ': ' + (err.message || 'Unknown error'));
@@ -1426,7 +1439,7 @@ const App: React.FC = () => {
       const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       
       if (type === 'file') {
-        // 1. Delete chunks if any
+        // 1. Delete file chunks if any
         const chunksQuery = query(collection(db, 'fileChunks'), where('fileId', '==', item.id));
         const chunksSnapshot = await getDocs(chunksQuery);
         if (!chunksSnapshot.empty) {
@@ -1443,7 +1456,26 @@ const App: React.FC = () => {
           }
           if (count > 0) await batch.commit();
         }
-        // 2. Delete file metadata
+
+        // 2. Delete thumbnail chunks if any
+        const thumbChunksQuery = query(collection(db, 'thumbnailChunks'), where('fileId', '==', item.id));
+        const thumbChunksSnapshot = await getDocs(thumbChunksQuery);
+        if (!thumbChunksSnapshot.empty) {
+          let batch = writeBatch(db);
+          let count = 0;
+          for (const chunkDoc of thumbChunksSnapshot.docs) {
+            batch.delete(chunkDoc.ref);
+            count++;
+            if (count === 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              count = 0;
+            }
+          }
+          if (count > 0) await batch.commit();
+        }
+
+        // 3. Delete file metadata
         await deleteDoc(doc(db, 'files', item.id));
       } else {
         // For folders, we should ideally delete recursively, but for simplicity in recycle bin, 
@@ -1570,35 +1602,81 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file || !activeThumbnailFileId) return;
 
-    if (file.size > 700 * 1024) {
+    if (file.size > 50 * 1024 * 1024) {
       alert(t('photoSizeError'));
       return;
     }
 
+    setIsUploading(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const dataUrl = event.target?.result as string;
+      const fullBase64 = event.target?.result as string;
       try {
         if (isDemoMode) {
-          setFiles(prev => prev.map(f => f.id === activeThumbnailFileId ? { ...f, thumbnailUrl: dataUrl } : f));
+          setFiles(prev => prev.map(f => f.id === activeThumbnailFileId ? { ...f, thumbnailUrl: fullBase64, isThumbnailChunked: false } : f));
           setActiveThumbnailFileId(null);
-          // Exit thumbnail mode after upload
           setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
+          setIsUploading(false);
           return;
         }
 
         const db = getFirebaseDb();
-        await updateDoc(doc(db, 'files', activeThumbnailFileId), { thumbnailUrl: dataUrl });
+        const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user?.uid;
+
+        // Chunk size: 700KB
+        const CHUNK_SIZE = 700 * 1024;
+        const chunks: string[] = [];
+        for (let i = 0; i < fullBase64.length; i += CHUNK_SIZE) {
+          chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
+        }
+
+        if (chunks.length > 1) {
+          // Save chunks to a separate collection
+          let currentBatch = writeBatch(db);
+          let count = 0;
+          
+          for (let i = 0; i < chunks.length; i++) {
+            const chunkRef = doc(collection(db, 'thumbnailChunks'));
+            currentBatch.set(chunkRef, {
+              fileId: activeThumbnailFileId,
+              index: i,
+              data: chunks[i],
+              userId: currentUserId
+            });
+            count++;
+            
+            if (count === 400) {
+              await currentBatch.commit();
+              currentBatch = writeBatch(db);
+              count = 0;
+            }
+          }
+          
+          if (count > 0) {
+            await currentBatch.commit();
+          }
+
+          await updateDoc(doc(db, 'files', activeThumbnailFileId), { 
+            thumbnailUrl: 'CHUNKED',
+            isThumbnailChunked: true,
+            thumbnailChunkCount: chunks.length
+          });
+        } else {
+          await updateDoc(doc(db, 'files', activeThumbnailFileId), { 
+            thumbnailUrl: fullBase64,
+            isThumbnailChunked: false
+          });
+        }
         
-        // Exit thumbnail mode after upload
         setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
         setActiveThumbnailFileId(null);
       } catch (err) {
         console.error("Error uploading thumbnail:", err);
+      } finally {
+        setIsUploading(false);
       }
     };
     reader.readAsDataURL(file);
-    // Reset input
     e.target.value = '';
   };
 
@@ -1760,11 +1838,49 @@ const App: React.FC = () => {
     }
   };
 
-  const downloadThumbnail = (file: FileData) => {
+  const downloadThumbnail = async (file: FileData) => {
     if (!file.thumbnailUrl) return;
+    
+    let dataUrl = file.thumbnailUrl;
+    
+    if (!isDemoMode && file.isThumbnailChunked && dataUrl === 'CHUNKED') {
+      setIsPreviewLoading(true);
+      try {
+        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        const chunksQuery = query(
+          collection(db, 'thumbnailChunks'), 
+          where('fileId', '==', file.id)
+        );
+        const chunksSnapshot = await getDocs(chunksQuery);
+        
+        if (chunksSnapshot.empty) {
+          alert(t('fileDownloadError'));
+          setIsPreviewLoading(false);
+          return;
+        }
+
+        const sortedChunks = chunksSnapshot.docs
+          .map(doc => doc.data())
+          .sort((a, b) => a.index - b.index);
+
+        let fullBase64 = '';
+        sortedChunks.forEach(chunk => {
+          fullBase64 += chunk.data;
+        });
+        dataUrl = fullBase64;
+      } catch (err) {
+        console.error("Thumbnail download error:", err);
+        alert(t('downloadStartError'));
+        setIsPreviewLoading(false);
+        return;
+      } finally {
+        setIsPreviewLoading(false);
+      }
+    }
+
     try {
       const link = document.createElement('a');
-      link.href = file.thumbnailUrl;
+      link.href = dataUrl;
       let downloadName = file.thumbnailName || '';
       if (!downloadName) {
         const nameParts = file.name.split('.');
@@ -1785,19 +1901,22 @@ const App: React.FC = () => {
   };
 
   const handlePreview = async (file: FileData) => {
-    if (!isDemoMode && file.isChunked && file.dataUrl === 'CHUNKED') {
+    const isThumbnailPreview = file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
+    const isFilePreview = file.dataUrl === 'CHUNKED' && file.isChunked;
+
+    if (!isDemoMode && (isFilePreview || isThumbnailPreview)) {
       setIsPreviewLoading(true);
       try {
-        console.log("Attempting to preview chunked file. ID:", file.id);
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        const collectionName = isThumbnailPreview ? 'thumbnailChunks' : 'fileChunks';
+        
         const chunksQuery = query(
-          collection(db, 'fileChunks'), 
+          collection(db, collectionName), 
           where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
         
         if (chunksSnapshot.empty) {
-          console.error("No chunks found in Firestore for preview. File ID:", file.id);
           if (!remoteAccess.isActive && window.confirm(t('previewLoadErrorConfirm'))) {
             await deleteDoc(doc(db, 'files', file.id));
             setFiles(files.filter(f => f.id !== file.id));
@@ -1808,9 +1927,6 @@ const App: React.FC = () => {
           return;
         }
 
-        console.log(`Found ${chunksSnapshot.size} chunks for preview of file ${file.id}`);
-
-        // Sort chunks in memory
         const sortedChunks = chunksSnapshot.docs
           .map(doc => doc.data())
           .sort((a, b) => a.index - b.index);
@@ -1820,11 +1936,9 @@ const App: React.FC = () => {
           fullBase64 += chunk.data;
         });
         
-        // Update the file object with the fetched dataUrl for the preview
         setShowPreview({ ...file, dataUrl: fullBase64 });
-        console.log("Preview reconstructed successfully. Total length:", fullBase64.length);
       } catch (err: any) {
-        console.error("Preview error details:", err);
+        console.error("Preview error:", err);
         alert(t('previewLoadGeneralError'));
       } finally {
         setIsPreviewLoading(false);

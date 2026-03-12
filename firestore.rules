@@ -29,7 +29,14 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
-    // ৫. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
+    // ৫. থাম্বনেইল টুকরো (Thumbnail Chunks)
+    match /thumbnailChunks/{chunkId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ৬. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
     match /remoteAccessHistory/{historyId} {
       allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
       allow create: if request.auth != null;

@@ -30,6 +30,8 @@ export interface FileData {
   dataUrl: string; // Base64 representation or "CHUNKED"
   thumbnailUrl?: string;
   thumbnailName?: string;
+  isThumbnailChunked?: boolean;
+  thumbnailChunkCount?: number;
   isChunked?: boolean;
   chunkCount?: number;
   isDeleted?: boolean;
