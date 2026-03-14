@@ -42,5 +42,10 @@ service cloud.firestore {
       allow create: if request.auth != null;
       allow update, delete: if false;
     }
+
+    // ৭. কানেকশন টেস্ট: সার্ভার কানেক্টিভিটি চেক করার জন্য (পাবলিক রিড অনুমোদিত)
+    match /_connection_test_/{docId} {
+      allow read: if true;
+    }
   }
 }

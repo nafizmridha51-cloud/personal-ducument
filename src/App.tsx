@@ -79,7 +79,8 @@ import {
   writeBatch,
   Firestore,
   getDoc,
-  deleteField
+  deleteField,
+  getDocFromServer
 } from 'firebase/firestore';
 import { User, Folder, FileData } from './types';
 import { translations } from './translations';
@@ -166,6 +167,7 @@ const App: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   const [configStatus, setConfigStatus] = useState<{ emailConfigured: boolean; user: string | null } | null>(null);
 
   useEffect(() => {
@@ -522,6 +524,37 @@ const App: React.FC = () => {
       localStorage.setItem(`demo_files_${remoteUserId}`, JSON.stringify(files));
     }
   }, [folders, files, isDemoMode, remoteAccess.isActive, remoteAccess.user?.uid]);
+
+  useEffect(() => {
+    const testConnection = async () => {
+      if (!isFirebaseConfigured || isDemoMode) {
+        setConnectionStatus('online');
+        return;
+      }
+      
+      setConnectionStatus('checking');
+      try {
+        const db = getFirebaseDb();
+        // Try to fetch a non-existent doc from a test collection to verify connectivity
+        await getDocFromServer(doc(db, '_connection_test_', 'ping'));
+        setConnectionStatus('online');
+      } catch (error: any) {
+        if (error.message?.includes('offline') || error.code === 'unavailable') {
+          setConnectionStatus('offline');
+        } else if (error.code === 'permission-denied') {
+          // If it's a permission error, it means we ARE connected to the server
+          setConnectionStatus('online');
+        } else {
+          console.error("Connection test failed:", error);
+          setConnectionStatus('online'); // Assume online if we got any response
+        }
+      }
+    };
+
+    testConnection();
+    const interval = setInterval(testConnection, 30000); // Re-check every 30s
+    return () => clearInterval(interval);
+  }, [isDemoMode]);
 
   useEffect(() => {
     if (!authUser || isDemoMode) {
@@ -2246,6 +2279,13 @@ const App: React.FC = () => {
           </button>
         </div>
       )}
+      {connectionStatus === 'offline' && (
+        <div className="bg-rose-600 text-white text-[11px] font-bold py-2 px-4 flex items-center justify-center gap-2 z-[100]">
+          <AlertCircle className="w-3.5 h-3.5" />
+          {t('connectionOffline')}
+          <p className="ml-4 opacity-80 font-normal hidden md:block">{t('restrictedNetworkWarning')}</p>
+        </div>
+      )}
       {/* Remote Access Modal */}
       <AnimatePresence>
         {showRemoteLogin && (
@@ -2857,6 +2897,19 @@ service cloud.firestore {
                 </button>
                 {isDemoMode && (
                   <span className="px-2 py-1 bg-amber-500/20 text-amber-500 text-[10px] font-bold rounded uppercase tracking-wider">Demo</span>
+                )}
+                {!isDemoMode && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-800 border border-slate-700">
+                    <div className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      connectionStatus === 'online' ? 'bg-emerald-500' : 
+                      connectionStatus === 'offline' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'
+                    )} />
+                    <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-400">
+                      {connectionStatus === 'online' ? 'Sync' : 
+                       connectionStatus === 'offline' ? 'Offline' : '...'}
+                    </span>
+                  </div>
                 )}
               </div>
             </div>
