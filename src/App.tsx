@@ -1047,6 +1047,10 @@ const App: React.FC = () => {
     setIsUploading(true);
     
     if (isDemoMode) {
+      if (!window.confirm(t('demoUploadWarning'))) {
+        setIsUploading(false);
+        return;
+      }
       const newFiles: FileData[] = [];
       
       for (const file of filesToUpload) {
@@ -2227,6 +2231,21 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-[#f8fafc] overflow-hidden">
+      {isDemoMode && !remoteAccess.isActive && (
+        <div className="bg-amber-500 text-white text-[11px] font-bold py-2 px-4 flex items-center justify-center gap-2 animate-pulse z-[100]">
+          <AlertCircle className="w-3.5 h-3.5" />
+          {t('demoModeWarning')}
+          <button 
+            onClick={() => {
+              setIsDemoMode(false);
+              setAuthUser(null);
+            }}
+            className="underline ml-2 hover:text-amber-100"
+          >
+            {t('loginNow')}
+          </button>
+        </div>
+      )}
       {/* Remote Access Modal */}
       <AnimatePresence>
         {showRemoteLogin && (
