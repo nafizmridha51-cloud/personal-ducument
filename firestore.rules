@@ -2,45 +2,70 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ১. ইউজার প্রোফাইল: যে কেউ লগইন থাকলে অন্য ইউজারের রিমোট কী চেক করতে পারবে
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/userProfiles/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "nafizmridha51@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isBlocked(ownerId) {
+      // Get owner's profile to check blocked list
+      let profile = get(/databases/$(database)/documents/userProfiles/$(ownerId)).data;
+      return 'blockedEmails' in profile && request.auth.token.email in profile.blockedEmails;
+    }
+
+    function canAccessRemote(ownerId) {
+      return isAuthenticated() && (isOwner(ownerId) || (!isBlocked(ownerId)));
+    }
+    
+    // ১. ইউজার প্রোফাইল: যে কেউ লগইন থাকলে অন্য ইউজারের রিমোট কী চেক করতে পারবে (ব্লক থাকলে পারবে না)
     match /userProfiles/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isAuthenticated() && (isOwner(userId) || !isBlocked(userId));
+      allow write: if isOwner(userId) || isAdmin();
     }
     
-    // ২. ফোল্ডার: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    // ২. ফোল্ডার: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে (ব্লক থাকলে পারবে না)
     match /folders/{folderId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if canAccessRemote(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId) || isAdmin();
     }
     
-    // ৩. ফাইল মেটাডেটা: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে
+    // ৩. ফাইল মেটাডেটা: মালিক সব পারবে, অন্য লগইন করা ইউজাররা রিমোটলি পড়তে পারবে (ব্লক থাকলে পারবে না)
     match /files/{fileId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if canAccessRemote(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId) || isAdmin();
     }
     
     // ৪. ফাইলের টুকরো (Chunks): ডাউনলোড করার জন্য এটি পড়া প্রয়োজন
     match /fileChunks/{chunkId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if canAccessRemote(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
     }
-
+    
     // ৫. থাম্বনেইল টুকরো (Thumbnail Chunks)
     match /thumbnailChunks/{chunkId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if canAccessRemote(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
     }
 
     // ৬. রিমোট অ্যাক্সেস হিস্টরি: মালিক পড়তে পারবে, অন্য লগইন করা ইউজাররা রিমোটলি লিখতে পারবে
     match /remoteAccessHistory/{historyId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.ownerUid;
-      allow create: if request.auth != null;
-      allow update, delete: if false;
+      allow read: if isAuthenticated() && (isOwner(resource.data.ownerUid) || isAdmin());
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
     }
 
     // ৭. কানেকশন টেস্ট: সার্ভার কানেক্টিভিটি চেক করার জন্য (পাবলিক রিড অনুমোদিত)

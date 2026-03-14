@@ -37,3 +37,22 @@ export interface FileData {
   isDeleted?: boolean;
   deletedAt?: number;
 }
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName?: string;
+  photoURL?: string;
+  remoteAccessKey?: string;
+  blockedEmails?: string[];
+  role?: 'admin' | 'user';
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: number;
+  isRead: boolean;
+  type: 'info' | 'warning' | 'success' | 'error';
+}

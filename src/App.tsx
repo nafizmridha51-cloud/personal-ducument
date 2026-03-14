@@ -48,7 +48,9 @@ import {
   RotateCcw,
   LayoutGrid,
   Fingerprint,
-  History
+  History,
+  Bell,
+  CheckCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -82,7 +84,7 @@ import {
   deleteField,
   getDocFromServer
 } from 'firebase/firestore';
-import { User, Folder, FileData } from './types';
+import { User, Folder, FileData, UserProfile, Notification } from './types';
 import { translations } from './translations';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -95,7 +97,7 @@ function cn(...inputs: ClassValue[]) {
 
 const App: React.FC = () => {
   const [authUser, setAuthUser] = React.useState<User | null>(null);
-  const [customProfile, setCustomProfile] = React.useState<{displayName?: string, photoURL?: string} | null>(null);
+  const [customProfile, setCustomProfile] = React.useState<UserProfile | null>(null);
   
   const user = React.useMemo(() => {
     if (!authUser) return null;
@@ -150,6 +152,56 @@ const App: React.FC = () => {
   const [isDemoMode, setIsDemoMode] = useState(() => {
     return localStorage.getItem('is_demo_mode') === 'true';
   });
+  const [notifications, setNotifications] = useState<Notification[]>(() => {
+    const saved = localStorage.getItem('app_notifications');
+    if (saved) return JSON.parse(saved);
+    return [
+      {
+        id: '1',
+        title: 'স্বাগতম!',
+        message: 'সুরক্ষিত নথি ভল্টে আপনাকে স্বাগতম। আপনার ফাইলগুলো এখন আরও নিরাপদ।',
+        timestamp: Date.now(),
+        isRead: false,
+        type: 'info'
+      },
+      {
+        id: '2',
+        title: 'নতুন ফিচার',
+        message: 'এখন আপনি প্রতিটি ফোল্ডারের জন্য আলাদা পাসওয়ার্ড সেট করতে পারবেন।',
+        timestamp: Date.now() - 3600000,
+        isRead: false,
+        type: 'success'
+      }
+    ];
+  });
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem('app_notifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const markAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  };
+
+  const clearNotifications = () => {
+    setNotifications([]);
+  };
+
+  const markAsRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  };
   const [unlockedFolderIds, setUnlockedFolderIds] = useState<string[]>([]);
   const [thumbnailModeFileIds, setThumbnailModeFileIds] = useState<string[]>([]);
   
@@ -848,6 +900,31 @@ const App: React.FC = () => {
       return;
     }
     try {
+      if (isDemoMode) {
+        // Mock remote login for Demo Mode testing
+        const normalizedEmail = remoteEmail.toLowerCase().trim();
+        if (normalizedEmail === 'demo@remote.com' && remoteAccessKeyInput === '123456') {
+          setRemoteAccess({
+            isActive: true,
+            user: {
+              uid: 'demo-user-id',
+              email: 'demo@remote.com',
+              displayName: 'Demo Remote User',
+              photoURL: ''
+            },
+            db: null,
+            app: null
+          });
+          sessionStorage.setItem('remote_session_active', 'true');
+          setShowRemoteLogin(false);
+          setRemoteEmail('');
+          setRemoteAccessKeyInput('');
+          setActiveFolderId(null);
+          return;
+        }
+        throw new Error(t('noVaultFound') + ' (Demo: demo@remote.com / 123456)');
+      }
+
       const db = getFirebaseDb();
       
       // Search for user profile by email (normalized)
@@ -874,6 +951,10 @@ const App: React.FC = () => {
 
       const storedKey = String(profileData.remoteAccessKey || '').trim();
       const inputKey = String(remoteAccessKeyInput || '').trim();
+
+      if (profileData.blockedEmails && profileData.blockedEmails.includes(user.email)) {
+        throw new Error(t('accessDeniedBlocked'));
+      }
 
       if (storedKey !== inputKey) {
         throw new Error(t('wrongRemotePassword'));
@@ -952,6 +1033,31 @@ const App: React.FC = () => {
       alert(t('savePassword')); // Error setting password
     } finally {
       setIsSavingRemoteKey(false);
+    }
+  };
+
+  const toggleBlockEmail = async (email: string) => {
+    if (!user) return;
+    try {
+      const currentBlocked = customProfile?.blockedEmails || [];
+      const isBlocked = currentBlocked.includes(email);
+      const newBlocked = isBlocked 
+        ? currentBlocked.filter((e: string) => e !== email)
+        : [...currentBlocked, email];
+
+      if (isDemoMode) {
+        const updatedProfile = { ...customProfile, blockedEmails: newBlocked };
+        setCustomProfile(updatedProfile as UserProfile);
+        localStorage.setItem(`demo_profile_${user.email?.toLowerCase()}`, JSON.stringify(updatedProfile));
+        return;
+      }
+
+      const db = getFirebaseDb();
+      const docRef = doc(db, 'userProfiles', user.uid);
+      await setDoc(docRef, { blockedEmails: newBlocked }, { merge: true });
+    } catch (err) {
+      console.error("Error toggling block:", err);
+      alert(t('saveError'));
     }
   };
 
@@ -2509,13 +2615,27 @@ const App: React.FC = () => {
                                   <p className="text-[9px] text-slate-400">{t('accessedBy')}</p>
                                 </div>
                               </div>
-                              <div className="text-right flex-shrink-0">
-                                <p className="text-[10px] font-medium text-slate-500">
-                                  {new Date(item.timestamp).toLocaleDateString()}
-                                </p>
-                                <p className="text-[9px] text-slate-400">
-                                  {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </p>
+                              <div className="flex items-center gap-3">
+                                <div className="text-right flex-shrink-0">
+                                  <p className="text-[10px] font-medium text-slate-500">
+                                    {new Date(item.timestamp).toLocaleDateString()}
+                                  </p>
+                                  <p className="text-[9px] text-slate-400">
+                                    {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleBlockEmail(item.accessorEmail)}
+                                  className={cn(
+                                    "px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition-all",
+                                    customProfile?.blockedEmails?.includes(item.accessorEmail)
+                                      ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
+                                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                  )}
+                                >
+                                  {customProfile?.blockedEmails?.includes(item.accessorEmail) ? t('unblock') : t('block')}
+                                </button>
                               </div>
                             </div>
                           ))}
@@ -3154,16 +3274,104 @@ service cloud.firestore {
               />
             </div>
           </div>
+
+          <div className="flex items-center gap-2 md:gap-4">
+            <div className="relative" ref={notificationRef}>
+              <button 
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-500 relative transition-all"
+              >
+                <Bell className="w-5 h-5" />
+                {notifications.filter(n => !n.isRead).length > 0 && (
+                  <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {showNotifications && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-50"
+                  >
+                    <div className="p-4 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
+                      <h3 className="font-bold text-slate-900 text-sm">{t('notifications')}</h3>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={markAllAsRead}
+                          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 uppercase tracking-wider"
+                        >
+                          {t('markAllAsRead')}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                      {notifications.length === 0 ? (
+                        <div className="p-10 text-center">
+                          <Bell className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                          <p className="text-sm text-slate-400 font-medium">{t('noNotifications')}</p>
+                        </div>
+                      ) : (
+                        notifications.map((notification, index) => (
+                          <div 
+                            key={`notification-${notification.id}-${index}`}
+                            onClick={() => markAsRead(notification.id)}
+                            className={cn(
+                              "p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer relative",
+                              !notification.isRead && "bg-indigo-50/30"
+                            )}
+                          >
+                            {!notification.isRead && (
+                              <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500"></div>
+                            )}
+                            <div className="flex gap-3">
+                              <div className={cn(
+                                "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                                notification.type === 'info' && "bg-blue-100 text-blue-600",
+                                notification.type === 'success' && "bg-emerald-100 text-emerald-600",
+                                notification.type === 'warning' && "bg-amber-100 text-amber-600",
+                                notification.type === 'error' && "bg-rose-100 text-rose-600"
+                              )}>
+                                {notification.type === 'success' ? <CheckCheck className="w-4 h-4" /> : <Info className="w-4 h-4" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-900 mb-0.5 truncate">{notification.title}</p>
+                                <p className="text-xs text-slate-500 leading-relaxed mb-2">{notification.message}</p>
+                                <p className="text-[10px] text-slate-400 font-medium">
+                                  {new Date(notification.timestamp).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {notifications.length > 0 && (
+                      <div className="p-3 bg-slate-50 border-t border-slate-100 text-center">
+                        <button 
+                          onClick={clearNotifications}
+                          className="text-[10px] font-bold text-rose-500 hover:text-rose-600 uppercase tracking-wider"
+                        >
+                          {t('clearAll')}
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           
-          {activeFolderId && !remoteAccess.isActive && (
-            <button
-              onClick={() => setShowUpload(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 md:px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100 shrink-0"
-            >
-              <FilePlus className="w-4 h-4" />
-              <span className="hidden sm:inline">{t('newFile')}</span>
-            </button>
-          )}
+            {activeFolderId && !remoteAccess.isActive && (
+              <button
+                onClick={() => setShowUpload(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 md:px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all shadow-lg shadow-indigo-100 shrink-0"
+              >
+                <FilePlus className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('newFile')}</span>
+              </button>
+            )}
+          </div>
         </header>
 
         {/* Content Area */}
