@@ -767,68 +767,110 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (showRemoteSettings && user) {
-      const fetchHistory = async () => {
+      let unsubscribe: () => void;
+
+      const setupListener = () => {
         try {
           if (isDemoMode) {
             const saved = localStorage.getItem(`demo_remote_history_${user.email?.toLowerCase()}`);
             if (saved) setRemoteHistory(JSON.parse(saved));
             else setRemoteHistory([]);
-            return;
+            return () => {};
           }
 
           const db = getFirebaseDb();
           const historyRef = collection(db, 'remoteAccessHistory');
-          // Simplified query to avoid requiring a composite index
           const q = query(
             historyRef, 
             where('ownerUid', '==', user.uid)
           );
-          const snapshot = await getDocs(q);
-          const historyData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }))
-          // Sort client-side to bypass index requirement
-          .sort((a: any, b: any) => {
-            const timeA = a.timestamp?.seconds || 0;
-            const timeB = b.timestamp?.seconds || 0;
-            return timeB - timeA;
-          })
-          .slice(0, 20);
 
-          setRemoteHistory(historyData);
+          return onSnapshot(q, (snapshot) => {
+            const historyData = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }))
+            .sort((a: any, b: any) => {
+              const getTime = (t: any) => {
+                if (!t) return 0;
+                if (typeof t === 'number') return t;
+                if (t.seconds) return t.seconds * 1000;
+                return 0;
+              };
+              return getTime(b.timestamp) - getTime(a.timestamp);
+            })
+            .slice(0, 20);
+
+            setRemoteHistory(historyData);
+          }, (err: any) => {
+            console.error("Error listening to remote history:", err);
+            if (err.code === 'permission-denied') {
+              setPermissionError(t('permissionError'));
+              setError("Firestore Permission Error: Please update your Security Rules in the Firebase Console.");
+            }
+          });
         } catch (err: any) {
-          console.error("Error fetching remote history:", err);
-          if (err.code === 'permission-denied') {
-            setPermissionError(t('permissionError'));
-            setError("Firestore Permission Error: Please update your Security Rules in the Firebase Console.");
-          } else if (err.message?.includes('requires an index')) {
-            // Extract the link from the error message if possible
-            const match = err.message.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
-            const indexLink = match ? match[0] : null;
-            
-            setError(
-              <div>
-                <p className="font-bold text-red-400 mb-2">Firestore Index Required</p>
-                <p className="text-xs mb-3">Remote history query needs a composite index. Please click the button below to create it in your Firebase Console.</p>
-                {indexLink && (
-                  <a 
-                    href={indexLink} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors"
-                  >
-                    Create Index Now
-                  </a>
-                )}
-              </div>
-            );
-          }
+          console.error("Error setting up remote history listener:", err);
         }
+        return () => {};
       };
-      fetchHistory();
+
+      unsubscribe = setupListener();
+      return () => unsubscribe && unsubscribe();
     }
   }, [showRemoteSettings, user, isDemoMode]);
+
+  // Global listener for remote access notifications
+  useEffect(() => {
+    if (!user || isDemoMode) return;
+
+    const db = getFirebaseDb();
+    const historyRef = collection(db, 'remoteAccessHistory');
+    const q = query(
+      historyRef, 
+      where('ownerUid', '==', user.uid)
+    );
+
+    let isInitialLoad = true;
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (isInitialLoad) {
+        isInitialLoad = false;
+        return;
+      }
+
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          const getTime = (t: any) => {
+            if (!t) return Date.now();
+            if (typeof t === 'number') return t;
+            if (t.seconds) return t.seconds * 1000;
+            return Date.now();
+          };
+
+          const newNotification: Notification = {
+            id: `remote-login-${change.doc.id}`,
+            title: t('remoteLoginDetected'),
+            message: `${data.accessorEmail} ${t('hasAccessedYourVault')}`,
+            timestamp: getTime(data.timestamp),
+            isRead: false,
+            type: 'warning'
+          };
+          
+          setNotifications(prev => {
+            if (prev.some(n => n.id === newNotification.id)) return prev;
+            const updated = [newNotification, ...prev].slice(0, 50);
+            localStorage.setItem('app_notifications', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      });
+    }, (err) => {
+      console.error("Remote history notification listener error:", err);
+    });
+
+    return () => unsubscribe();
+  }, [user, isDemoMode]);
 
   const handleRemoteLogin = async (e: React.FormEvent) => {
     e.preventDefault();

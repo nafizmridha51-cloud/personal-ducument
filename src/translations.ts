@@ -247,7 +247,9 @@ export const translations = {
     notifications: "নোটিফিকেশন",
     noNotifications: "কোনো নোটিফিকেশন নেই",
     markAllAsRead: "সব পড়া হয়েছে হিসেবে চিহ্নিত করুন",
-    clearAll: "সব মুছুন"
+    clearAll: "সব মুছুন",
+    remoteLoginDetected: "রিমোট লগইন শনাক্ত করা হয়েছে",
+    hasAccessedYourVault: "আপনার ভল্ট অ্যাক্সেস করেছেন"
   },
   en: {
     appName: "Secure Doc Vault",
@@ -496,6 +498,8 @@ export const translations = {
     notifications: "Notifications",
     noNotifications: "No notifications",
     markAllAsRead: "Mark all as read",
-    clearAll: "Clear all"
+    clearAll: "Clear all",
+    remoteLoginDetected: "Remote Login Detected",
+    hasAccessedYourVault: "has accessed your vault"
   }
 };
