@@ -3740,14 +3740,17 @@ service cloud.firestore {
                           className="flex flex-col items-center p-4 bg-white rounded-2xl border border-slate-200 hover:border-indigo-200 hover:shadow-md transition-all group relative cursor-pointer"
                         >
                           {!remoteAccess.isActive && (
-                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            <div className={cn(
+                              "absolute top-2 right-2 flex gap-1 transition-all",
+                              isMobile ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                            )}>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setEditingFolderId(folder.id);
                                   setEditingFolderName(folder.name);
                                 }}
-                                className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg"
+                                className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg"
                                 title={t('rename')}
                               >
                                 <Pencil className="w-3.5 h-3.5" />
@@ -3757,7 +3760,7 @@ service cloud.firestore {
                                   e.stopPropagation();
                                   deleteFolder(folder.id);
                                 }}
-                                className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg"
+                                className="p-1.5 text-slate-500 hover:text-rose-500 hover:bg-rose-50 rounded-lg"
                                 title={t('delete')}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -3836,7 +3839,7 @@ service cloud.firestore {
                             {(file.type.includes('image') || file.type.includes('pdf')) && (
                             <button 
                               onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true }) : handlePreview(file)}
-                              className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                              className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                               title={t('preview')}
                             >
                               <Eye className="w-4 h-4" />
@@ -3845,7 +3848,7 @@ service cloud.firestore {
                           {!remoteAccess.isActive && (
                             <button 
                               onClick={() => setMovingFile(file)}
-                              className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                              className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                               title={t('move')}
                             >
                               <ArrowRightLeft className="w-4 h-4" />
@@ -3859,7 +3862,7 @@ service cloud.firestore {
                                 ? "text-indigo-500 bg-indigo-50" 
                                 : (isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED')
                                   ? "text-emerald-500 bg-emerald-50" 
-                                  : "text-slate-300 hover:text-blue-500 hover:bg-blue-50"
+                                  : "text-slate-500 hover:text-blue-500 hover:bg-blue-50"
                             )}
                             title={(isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED') ? t('share') : t('preparing')}
                           >
@@ -3878,7 +3881,7 @@ service cloud.firestore {
                                   setEditingFileId(file.id);
                                   setEditingFileName(isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name);
                                 }}
-                                className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                                className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                                 title={t('rename')}
                               >
                                 <Pencil className="w-4 h-4" />
@@ -3896,7 +3899,7 @@ service cloud.firestore {
                                   "p-1.5 transition-all rounded-lg",
                                   (isDeleting === file.id || (isThumbnailMode && !hasThumbnail))
                                     ? "opacity-50 cursor-not-allowed"
-                                    : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
+                                    : "text-slate-500 hover:text-rose-500 hover:bg-rose-50"
                                 )}
                               >
                                 {isDeleting === file.id ? (
