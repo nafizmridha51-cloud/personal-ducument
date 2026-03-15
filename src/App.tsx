@@ -2445,7 +2445,7 @@ const App: React.FC = () => {
       {/* Remote Access Modal */}
       <AnimatePresence>
         {showRemoteLogin && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="remote-login-backdrop" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="remote-login-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -2552,7 +2552,7 @@ const App: React.FC = () => {
       {/* Remote Settings Modal */}
       <AnimatePresence>
         {showRemoteSettings && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="remote-settings-backdrop" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="remote-settings-modal"
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -2760,7 +2760,7 @@ const App: React.FC = () => {
       {/* Firestore Rules Guide Modal */}
       <AnimatePresence>
         {showRulesGuide && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div key="rules-guide-wrapper" className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div
               key="firestore-rules-guide"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -3340,6 +3340,7 @@ service cloud.firestore {
               <AnimatePresence>
                 {showNotifications && (
                   <motion.div 
+                    key="notifications-panel"
                     initial={{ opacity: 0, y: 10, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -4015,7 +4016,7 @@ service cloud.firestore {
       {/* Profile Edit Modal */}
       <AnimatePresence>
         {showProfileEdit && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div key="profile-edit-wrapper" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div 
               key="profile-edit-backdrop"
               initial={{ opacity: 0 }}
@@ -4094,7 +4095,7 @@ service cloud.firestore {
       {/* Move File Modal */}
       <AnimatePresence>
         {movingFile && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div key="move-file-wrapper" className="fixed inset-0 z-[110] flex items-center justify-center p-4">
             <motion.div 
               key="move-file-backdrop"
               initial={{ opacity: 0 }}
@@ -4172,7 +4173,7 @@ service cloud.firestore {
       <AnimatePresence>
         {/* Add Folder Modal */}
         {showAddFolder && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="add-folder-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="add-folder-modal"
               initial={{ scale: 0.9, opacity: 0 }}
@@ -4234,7 +4235,7 @@ service cloud.firestore {
 
         {/* Lock Folder Modal */}
         {showLockFolder && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="lock-folder-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="lock-folder-modal"
               initial={{ scale: 0.9, opacity: 0 }}
@@ -4301,7 +4302,7 @@ service cloud.firestore {
 
         {/* Upload Modal */}
         {showUpload && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="upload-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="upload-modal"
               initial={{ scale: 0.9, opacity: 0 }}
@@ -4341,10 +4342,10 @@ service cloud.firestore {
         )}
 
         {/* Delete Folder Password Modal */}
-        <AnimatePresence>
-          {showDeleteFolder && (
-            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        {showDeleteFolder && (
+          <div key="delete-folder-backdrop" className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
               <motion.div 
+                key="delete-folder-modal"
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
@@ -4385,11 +4386,10 @@ service cloud.firestore {
               </motion.div>
             </div>
           )}
-        </AnimatePresence>
 
         {/* Unlock Modal */}
         {showUnlock && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="unlock-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="unlock-modal"
               initial={{ scale: 0.9, opacity: 0 }}
@@ -4464,7 +4464,7 @@ service cloud.firestore {
 
         {/* Forgot Password Modal */}
         {showForgot && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div key="forgot-password-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               key="forgot-password-modal"
               initial={{ scale: 0.9, opacity: 0 }}
@@ -4599,7 +4599,7 @@ service cloud.firestore {
         )}
         {/* Preview Modal */}
         {showPreview && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+          <div key="preview-backdrop" className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
             <motion.div 
               key="preview-modal"
               initial={{ scale: 0.9, opacity: 0 }}
