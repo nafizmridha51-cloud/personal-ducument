@@ -2087,8 +2087,8 @@ const App: React.FC = () => {
   };
 
   const handlePreview = async (file: FileData) => {
-    const isThumbnailPreview = file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
-    const isFilePreview = file.dataUrl === 'CHUNKED' && file.isChunked;
+    const isThumbnailPreview = file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
+    const isFilePreview = !file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isChunked;
 
     if (!isDemoMode && (isFilePreview || isThumbnailPreview)) {
       setIsPreviewLoading(true);
@@ -2162,12 +2162,16 @@ const App: React.FC = () => {
     if (isSharing) return;
 
     // If file is chunked and not yet loaded, we need to prepare it first
-    if (!isDemoMode && file.isChunked && file.dataUrl === 'CHUNKED') {
+    const isThumbnailShare = file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
+    const isMainFileChunked = !file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isChunked;
+
+    if (!isDemoMode && (isMainFileChunked || isThumbnailShare)) {
       setPreparingFileId(file.id);
       try {
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+        const collectionName = isThumbnailShare ? 'thumbnailChunks' : 'fileChunks';
         const chunksQuery = query(
-          collection(db, 'fileChunks'), 
+          collection(db, collectionName), 
           where('fileId', '==', file.id)
         );
         const chunksSnapshot = await getDocs(chunksQuery);
@@ -2188,7 +2192,11 @@ const App: React.FC = () => {
         });
         
         // Update the file in the state so it's "ready" for the next click
-        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
+        if (isThumbnailShare) {
+          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, thumbnailUrl: fullBase64 } : f));
+        } else {
+          setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
+        }
         
         // We don't call share here because the user gesture is lost after async fetch.
         // The UI will now show a "Ready" state for this file.
@@ -3827,7 +3835,7 @@ service cloud.firestore {
                           <div className="flex items-center gap-1">
                             {(file.type.includes('image') || file.type.includes('pdf')) && (
                             <button 
-                              onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' }) : handlePreview(file)}
+                              onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true }) : handlePreview(file)}
                               className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
                               title={t('preview')}
                             >
@@ -3844,16 +3852,16 @@ service cloud.firestore {
                             </button>
                           )}
                           <button 
-                            onClick={() => isThumbnailMode && hasThumbnail ? handleShare({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', name: (file.thumbnailName || file.name.split('.')[0]) + '-photo.png' }) : handleShare(file)}
+                            onClick={() => isThumbnailMode && hasThumbnail ? handleShare({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', name: (file.thumbnailName || file.name.split('.')[0]) + '-photo.png', isThumbnail: true }) : handleShare(file)}
                             className={cn(
                               "p-1.5 transition-all rounded-lg",
                               preparingFileId === file.id 
                                 ? "text-indigo-500 bg-indigo-50" 
-                                : (file.dataUrl !== 'CHUNKED' || (isThumbnailMode && hasThumbnail))
+                                : (isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED')
                                   ? "text-emerald-500 bg-emerald-50" 
                                   : "text-slate-300 hover:text-blue-500 hover:bg-blue-50"
                             )}
-                            title={(file.dataUrl !== 'CHUNKED' || (isThumbnailMode && hasThumbnail)) ? t('share') : t('preparing')}
+                            title={(isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED') ? t('share') : t('preparing')}
                           >
                             {preparingFileId === file.id ? (
                               <Loader2 className="w-4 h-4 animate-spin" />
@@ -3909,7 +3917,7 @@ service cloud.firestore {
                               src={file.thumbnailUrl} 
                               className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
                               alt="thumbnail"
-                              onClick={() => handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' })}
+                              onClick={() => handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true })}
                             />
                             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                               <Eye className="w-6 h-6 text-white" />
@@ -3951,7 +3959,7 @@ service cloud.firestore {
                             title={isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name}
                             onClick={() => {
                               if (isThumbnailMode && hasThumbnail) {
-                                handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png' });
+                                handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true });
                               } else if (file.type.includes('image')) {
                                 handlePreview(file);
                               }

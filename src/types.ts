@@ -36,6 +36,7 @@ export interface FileData {
   chunkCount?: number;
   isDeleted?: boolean;
   deletedAt?: number;
+  isThumbnail?: boolean;
 }
 
 export interface UserProfile {
