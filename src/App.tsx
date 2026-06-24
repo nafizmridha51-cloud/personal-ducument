@@ -244,7 +244,25 @@ const App: React.FC = () => {
   }, [showForgot]);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
   const [offlineShareFile, setOfflineShareFile] = useState<FileData | null>(null);
+  const [showOfflineBatchShare, setShowOfflineBatchShare] = useState(false);
+  const [cachedFileIds, setCachedFileIds] = useState<Record<string, boolean>>({});
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+
+  const checkSelectedFilesCache = async (ids: string[]) => {
+    const cacheStatus: Record<string, boolean> = {};
+    for (const id of ids) {
+      const data = await fileCache.get(id);
+      cacheStatus[id] = !!data;
+    }
+    setCachedFileIds(prev => ({ ...prev, ...cacheStatus }));
+  };
+
+  useEffect(() => {
+    if (files.length > 0) {
+      const ids = files.map(f => f.id);
+      checkSelectedFilesCache(ids);
+    }
+  }, [files]);
   const [showRecycleBin, setShowRecycleBin] = useState(false);
   const [showStorageAnalysis, setShowStorageAnalysis] = useState(false);
   const [biometricEnabledFolders, setBiometricEnabledFolders] = useState<string[]>(() => {
@@ -2447,8 +2465,140 @@ const App: React.FC = () => {
     }
   };
 
+  const shareBatchFilesOffline = async () => {
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      const shareFiles: File[] = [];
+
+      for (const fileId of selectedFileIds) {
+        const file = files.find(f => f.id === fileId);
+        if (!file) continue;
+
+        let dataUrl = file.dataUrl;
+        if (dataUrl === 'OFFLINE_CACHED' || dataUrl === 'CHUNKED') {
+          const cachedData = await fileCache.get(file.id);
+          if (cachedData) {
+            dataUrl = cachedData;
+          } else {
+            continue;
+          }
+        }
+
+        const blob = dataUrlToBlob(dataUrl);
+        if (!blob) continue;
+
+        let fileName = file.name;
+        const extensionMap: Record<string, string> = {
+          'image/jpeg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'application/pdf': '.pdf',
+          'text/plain': '.txt',
+        };
+
+        const hasExtension = fileName.includes('.');
+        if (!hasExtension && extensionMap[file.type]) {
+          fileName += extensionMap[file.type];
+        }
+
+        const shareFile = new File([blob], fileName, { type: file.type });
+        shareFiles.push(shareFile);
+      }
+
+      if (shareFiles.length === 0) {
+        alert(language === 'bn' ? 'শেয়ার করার মতো কোনো অফলাইন ফাইল প্রস্তুত নেই।' : 'No offline ready files found to share.');
+        setIsSharing(false);
+        return;
+      }
+
+      if (navigator.share) {
+        const shareData: ShareData = {
+          files: shareFiles,
+          title: language === 'bn' ? 'শেয়ার করা ফাইলসমূহ' : 'Shared Files',
+          text: language === 'bn' ? 'সুরক্ষিত নথি ভল্ট থেকে ফাইল শেয়ার করা হয়েছে।' : 'Files shared from Secure Doc Vault.',
+        };
+
+        if (navigator.canShare && navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+        } else {
+          await navigator.share({
+            title: language === 'bn' ? `${shareFiles.length} টি ফাইল` : `${shareFiles.length} files`,
+            text: language === 'bn' ? `${shareFiles.length} টি ফাইল শেয়ার করা হয়েছে।` : `Sharing ${shareFiles.length} files.`,
+          });
+        }
+        
+        setSelectedFileIds([]);
+        setIsSelectionMode(false);
+      } else {
+        alert(t('shareNotSupported'));
+      }
+    } catch (err: any) {
+      console.error('Offline batch share failed:', err);
+      if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+        alert(t('sharePermissionError'));
+      } else if (err.name !== 'AbortError' && !err.message?.includes('already completed')) {
+        alert(t('shareError'));
+      }
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const downloadBatchFilesOffline = async () => {
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      let downloadCount = 0;
+      for (const fileId of selectedFileIds) {
+        const file = files.find(f => f.id === fileId);
+        if (!file) continue;
+
+        let dataUrl = file.dataUrl;
+        if (dataUrl === 'OFFLINE_CACHED' || dataUrl === 'CHUNKED') {
+          const cachedData = await fileCache.get(file.id);
+          if (cachedData) {
+            dataUrl = cachedData;
+          } else {
+            continue;
+          }
+        }
+
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        downloadCount++;
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      if (downloadCount > 0) {
+        alert(language === 'bn' 
+          ? `সফলভাবে ${downloadCount} টি ফাইল ডাউনলোড করা হয়েছে। এখন আপনার ফাইল ম্যানেজার থেকে ফাইলগুলো ব্লুটুথ দিয়ে শেয়ার করুন!` 
+          : `Successfully downloaded ${downloadCount} files. Now share them via Bluetooth from your file manager!`
+        );
+        setSelectedFileIds([]);
+        setIsSelectionMode(false);
+      } else {
+        alert(language === 'bn' ? 'ডাউনলোড করার মতো কোনো অফলাইন ফাইল পাওয়া যায়নি।' : 'No offline ready files found to download.');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   const handleBatchShare = async () => {
     if (selectedFileIds.length === 0 || isSharing) return;
+
+    if (connectionStatus === 'offline') {
+      setShowOfflineBatchShare(true);
+      return;
+    }
 
     setIsSharing(true);
     setShareProgress(0);
@@ -5154,6 +5304,146 @@ service cloud.firestore {
               </div>
 
               <div className="mt-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                  💡 {t('offlineShareTip')}
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Offline Batch Share Modal */}
+        {showOfflineBatchShare && (
+          <div key="offline-batch-share-backdrop" className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+            <motion.div 
+              key="offline-batch-share-modal"
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 max-w-lg w-full relative overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <button 
+                onClick={() => setShowOfflineBatchShare(false)}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 transition-all rounded-full hover:bg-slate-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="text-center mb-4 shrink-0">
+                <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-inner">
+                  <Share2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-1">
+                  {language === 'bn' ? 'অফলাইন মাল্টি-শেয়ার হাব' : 'Offline Multi-Share Hub'}
+                </h3>
+                <p className="text-slate-500 text-xs font-bold font-sans">
+                  {language === 'bn' 
+                    ? `${selectedFileIds.length} টি ফাইল সিলেক্ট করা হয়েছে` 
+                    : `${selectedFileIds.length} files selected`
+                  }
+                </p>
+              </div>
+
+              {/* Selected Files List with cache status */}
+              <div className="flex-1 overflow-y-auto min-h-[120px] max-h-[300px] mb-4 border border-slate-100 rounded-2xl bg-slate-50/50 p-3 space-y-2 custom-scrollbar">
+                {selectedFileIds.map(fileId => {
+                  const file = files.find(f => f.id === fileId);
+                  if (!file) return null;
+                  const isReadyOffline = file.dataUrl !== 'CHUNKED' || cachedFileIds[file.id];
+                  
+                  return (
+                    <div key={file.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-100 rounded-xl shadow-sm animate-in fade-in duration-200">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center shrink-0">
+                          {file.type.includes('pdf') ? (
+                            <FileText className="w-4 h-4 text-rose-500" />
+                          ) : file.type.includes('image') ? (
+                            <ImageIcon className="w-4 h-4 text-indigo-500" />
+                          ) : (
+                            <FileIcon className="w-4 h-4 text-slate-400" />
+                          )}
+                        </div>
+                        <div className="truncate text-left">
+                          <p className="text-xs font-bold text-slate-800 truncate max-w-[180px] sm:max-w-[260px]">
+                            {file.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-sans">{file.size}</p>
+                        </div>
+                      </div>
+
+                      {isReadyOffline ? (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-md font-bold shrink-0 flex items-center gap-0.5">
+                          <Check className="w-3 h-3 stroke-[3px]" />
+                          {language === 'bn' ? 'প্রস্তুত' : 'Ready'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-0.5 rounded-md font-bold shrink-0 flex items-center gap-0.5">
+                          <AlertCircle className="w-3 h-3" />
+                          {language === 'bn' ? 'ক্লাউড ফাইল' : 'Cloud File'}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Warnings if some files are not ready */}
+              {selectedFileIds.some(id => !cachedFileIds[id] && files.find(f => f.id === id)?.dataUrl === 'CHUNKED') && !isDemoMode && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl mb-4 text-left text-xs leading-relaxed text-amber-800 flex gap-2 shrink-0">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div>
+                    <p className="font-bold mb-1">ক্লাউড ফাইল অফলাইন সীমাবদ্ধতা (Cloud File Limitation)</p>
+                    <p>{t('offlineShareAlert')}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-4 shrink-0">
+                <button
+                  onClick={async () => {
+                    setShowOfflineBatchShare(false);
+                    await shareBatchFilesOffline();
+                  }}
+                  disabled={!selectedFileIds.some(id => cachedFileIds[id] || files.find(f => f.id === id)?.dataUrl !== 'CHUNKED')}
+                  className={cn(
+                    "w-full p-4 border rounded-2xl text-left transition-all duration-200 flex items-center gap-4 group",
+                    !selectedFileIds.some(id => cachedFileIds[id] || files.find(f => f.id === id)?.dataUrl !== 'CHUNKED')
+                      ? "bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed"
+                      : "bg-white border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/30"
+                  )}
+                >
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                    !selectedFileIds.some(id => cachedFileIds[id] || files.find(f => f.id === id)?.dataUrl !== 'CHUNKED')
+                      ? "bg-slate-100 text-slate-400"
+                      : "bg-indigo-100 text-indigo-600 group-hover:bg-indigo-200"
+                  )}>
+                    <Share2 className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <h4 className="font-bold text-slate-900 text-sm">{t('bluetoothShare')}</h4>
+                    <p className="text-xs text-slate-500">{t('bluetoothShareDesc')}</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowOfflineBatchShare(false);
+                    downloadBatchFilesOffline();
+                  }}
+                  className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-left transition-all duration-200 flex items-center gap-4 hover:border-indigo-500 hover:bg-indigo-50/30 group"
+                >
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center shrink-0 group-hover:bg-emerald-200">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <h4 className="font-bold text-slate-900 text-sm">{t('downloadOffline')}</h4>
+                    <p className="text-xs text-slate-500">{t('downloadOfflineDesc')}</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left shrink-0">
                 <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
                   💡 {t('offlineShareTip')}
                 </p>
