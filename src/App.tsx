@@ -2548,13 +2548,34 @@ const App: React.FC = () => {
           <h1 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight">সুরক্ষিত নথি ভল্ট</h1>
           <p className="text-slate-500 mb-10 leading-relaxed">আপনার গুরুত্বপূর্ণ নথিপত্র নিরাপদে সংরক্ষণ করুন। প্রতিটি ফাইলের জন্য আলাদা পাসওয়ার্ড এবং জিমেইল লগইন সুবিধা।</p>
           
-          <button
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-4 bg-white border-2 border-slate-200 hover:border-indigo-500 hover:bg-slate-50 text-slate-700 font-bold py-4 rounded-2xl transition-all duration-300 group mb-4"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" />
-            জিমেইল দিয়ে লগইন করুন
-          </button>
+          {connectionStatus === 'offline' ? (
+            <div className="space-y-4 mb-4">
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-left">
+                <div className="flex items-start gap-2 text-amber-700 mb-1">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p className="text-xs font-bold">আপনি অফলাইনে আছেন (You are Offline)</p>
+                </div>
+                <p className="text-[11px] text-amber-600 leading-relaxed">
+                  ইন্টারনেট কানেকশন ছাড়া ওয়েবসাইটটি ব্যবহার করার জন্য <strong>অফলাইন মোড</strong> চালু করুন। এই মোডে আপনি ফাইল আপলোড, ফোল্ডার লক ও ব্লুটুথ/শেয়ার অপশন ব্যবহার করে ফাইল শেয়ার করতে পারবেন।
+                </p>
+              </div>
+              <button
+                onClick={() => setIsDemoMode(true)}
+                className="w-full flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl transition-all duration-300 shadow-md shadow-indigo-100"
+              >
+                <Fingerprint className="w-5 h-5" />
+                অফলাইন মোডে প্রবেশ করুন
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full flex items-center justify-center gap-4 bg-white border-2 border-slate-200 hover:border-indigo-500 hover:bg-slate-50 text-slate-700 font-bold py-4 rounded-2xl transition-all duration-300 group mb-4"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" />
+              জিমেইল দিয়ে লগইন করুন
+            </button>
+          )}
 
           {authError && (
             <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl mb-6 text-left">
