@@ -146,6 +146,10 @@ const App: React.FC = () => {
     return localStorage.getItem('active_folder_id');
   });
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [uploadFilesCount, setUploadFilesCount] = useState(0);
+  const [currentUploadingIndex, setCurrentUploadingIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1226,15 +1230,28 @@ const App: React.FC = () => {
     }
 
     setIsUploading(true);
+    setUploadProgress(0);
+    setUploadStatus('uploading');
+    setUploadFilesCount(filesToUpload.length);
+    setCurrentUploadingIndex(1);
     
     if (isDemoMode) {
       if (!window.confirm(t('demoUploadWarning'))) {
         setIsUploading(false);
+        setUploadStatus('idle');
         return;
       }
       const newFiles: FileData[] = [];
+      const total = filesToUpload.length;
       
-      for (const file of filesToUpload) {
+      for (let i = 0; i < total; i++) {
+        const file = filesToUpload[i];
+        setCurrentUploadingIndex(i + 1);
+        setUploadProgress(Math.round((i / total) * 100));
+        
+        // Wait 300ms to allow progress bar to render nicely
+        await new Promise(resolve => setTimeout(resolve, 300));
+
         const base64Data = await new Promise<string>((resolve) => {
           const reader = new FileReader();
           reader.onload = (e) => resolve(e.target?.result as string);
@@ -1252,11 +1269,16 @@ const App: React.FC = () => {
           dataUrl: base64Data,
           isChunked: false
         });
+
+        setUploadProgress(Math.round(((i + 1) / total) * 100));
       }
 
       setFiles([...files, ...newFiles]);
+      setUploadStatus('success');
+      await new Promise(resolve => setTimeout(resolve, 1500));
       setShowUpload(false);
       setIsUploading(false);
+      setUploadStatus('idle');
       return;
     }
 
@@ -1264,28 +1286,41 @@ const App: React.FC = () => {
       const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
       const currentUserId = remoteAccess.isActive && remoteAccess.user ? remoteAccess.user.uid : user.uid;
 
+      // 1. Pre-process and chunk files to calculate total chunk count
+      const filesWithChunks = [];
+      let totalChunks = 0;
+
       for (const file of filesToUpload) {
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        
+        const fullBase64 = await base64Promise;
+        const CHUNK_SIZE = 700 * 1024;
+        const chunksCount = Math.ceil(fullBase64.length / CHUNK_SIZE);
+        
+        filesWithChunks.push({
+          file,
+          fullBase64,
+          chunksCount,
+          chunks: Array.from({ length: chunksCount }, (_, index) => 
+            fullBase64.substring(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE)
+          )
+        });
+        totalChunks += chunksCount;
+      }
+
+      let chunksUploaded = 0;
+      let currentFileIdx = 0;
+
+      for (const { file, chunks } of filesWithChunks) {
+        currentFileIdx++;
+        setCurrentUploadingIndex(currentFileIdx);
         let fileDocRef: any = null;
         try {
-          // Read file as base64
-          const reader = new FileReader();
-          const base64Promise = new Promise<string>((resolve, reject) => {
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          
-          const fullBase64 = await base64Promise;
-          
-          // Chunk size: 700KB (to stay safe within 1MB Firestore limit)
-          const CHUNK_SIZE = 700 * 1024;
-          const chunks: string[] = [];
-          for (let i = 0; i < fullBase64.length; i += CHUNK_SIZE) {
-            chunks.push(fullBase64.substring(i, i + CHUNK_SIZE));
-          }
-
-          console.log(`Uploading ${file.name} in ${chunks.length} chunks...`);
-
           // 1. Save metadata to Firestore
           const fileDoc = await addDoc(collection(db, 'files'), {
             name: file.name,
@@ -1303,30 +1338,19 @@ const App: React.FC = () => {
           fileDocRef = fileDoc;
 
           // 2. Save chunks to Firestore
-          let currentBatch = writeBatch(db);
-          let count = 0;
-          
           for (let i = 0; i < chunks.length; i++) {
             const chunkRef = doc(collection(db, 'fileChunks'));
-            currentBatch.set(chunkRef, {
+            await setDoc(chunkRef, {
               fileId: fileDoc.id,
               index: i,
               data: chunks[i],
               userId: currentUserId
             });
-            count++;
             
-            if (count === 400) {
-              await currentBatch.commit();
-              currentBatch = writeBatch(db);
-              count = 0;
-            }
+            chunksUploaded++;
+            setUploadProgress(Math.round((chunksUploaded / totalChunks) * 100));
           }
-          
-          if (count > 0) {
-            await currentBatch.commit();
-          }
-          
+
           console.log(`File ${file.name} uploaded successfully.`);
         } catch (fileErr: any) {
           console.error(`Upload failed for ${file.name}:`, fileErr);
@@ -1342,16 +1366,20 @@ const App: React.FC = () => {
         }
       }
 
+      setUploadStatus('success');
+      await new Promise(resolve => setTimeout(resolve, 1500));
       setShowUpload(false);
+      setIsUploading(false);
+      setUploadStatus('idle');
     } catch (err: any) {
+      setUploadStatus('error');
+      setIsUploading(false);
       console.error("Upload process failed:", err);
       if (err.code === 'permission-denied') {
         alert(t('permissionError'));
       } else {
         alert(t('uploadError'));
       }
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -1793,15 +1821,26 @@ const App: React.FC = () => {
     }
 
     setIsUploading(true);
+    setUploadProgress(0);
+    setUploadStatus('uploading');
+    setUploadFilesCount(1);
+    setCurrentUploadingIndex(1);
+
     const reader = new FileReader();
     reader.onload = async (event) => {
       const fullBase64 = event.target?.result as string;
       try {
         if (isDemoMode) {
+          setUploadProgress(50);
+          await new Promise(resolve => setTimeout(resolve, 300));
           setFiles(prev => prev.map(f => f.id === activeThumbnailFileId ? { ...f, thumbnailUrl: fullBase64, isThumbnailChunked: false } : f));
+          setUploadProgress(100);
+          setUploadStatus('success');
+          await new Promise(resolve => setTimeout(resolve, 1000));
           setActiveThumbnailFileId(null);
           setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
           setIsUploading(false);
+          setUploadStatus('idle');
           return;
         }
 
@@ -1816,29 +1855,15 @@ const App: React.FC = () => {
         }
 
         if (chunks.length > 1) {
-          // Save chunks to a separate collection
-          let currentBatch = writeBatch(db);
-          let count = 0;
-          
           for (let i = 0; i < chunks.length; i++) {
             const chunkRef = doc(collection(db, 'thumbnailChunks'));
-            currentBatch.set(chunkRef, {
+            await setDoc(chunkRef, {
               fileId: activeThumbnailFileId,
               index: i,
               data: chunks[i],
               userId: currentUserId
             });
-            count++;
-            
-            if (count === 400) {
-              await currentBatch.commit();
-              currentBatch = writeBatch(db);
-              count = 0;
-            }
-          }
-          
-          if (count > 0) {
-            await currentBatch.commit();
+            setUploadProgress(Math.round(((i + 1) / chunks.length) * 100));
           }
 
           await updateDoc(doc(db, 'files', activeThumbnailFileId), { 
@@ -1851,12 +1876,17 @@ const App: React.FC = () => {
             thumbnailUrl: fullBase64,
             isThumbnailChunked: false
           });
+          setUploadProgress(100);
         }
         
+        setUploadStatus('success');
+        await new Promise(resolve => setTimeout(resolve, 1000));
         setThumbnailModeFileIds(prev => prev.filter(id => id !== activeThumbnailFileId));
         setActiveThumbnailFileId(null);
+        setUploadStatus('idle');
       } catch (err) {
         console.error("Error uploading thumbnail:", err);
+        setUploadStatus('error');
         alert(t('saveError'));
       } finally {
         setIsUploading(false);
@@ -4661,13 +4691,61 @@ service cloud.firestore {
       </AnimatePresence>
 
       {/* Persistent Footer/Status */}
-      <footer className="fixed bottom-0 right-0 p-4 pointer-events-none z-[100]">
-        {(isUploading || isPreviewLoading) && (
-          <div className="bg-slate-900 text-white px-4 py-2 rounded-full text-xs shadow-2xl flex items-center gap-2 animate-bounce">
-            <span className="w-2 h-2 bg-indigo-500 rounded-full animate-ping"></span>
-            {isPreviewLoading ? t('loadingPreview') : t('processing')}
-          </div>
-        )}
+      <footer className="fixed bottom-0 right-0 p-4 pointer-events-none z-[100] max-w-sm w-full sm:w-80">
+        <AnimatePresence>
+          {(isUploading || isPreviewLoading) && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.9 }}
+              className="bg-slate-900/95 backdrop-blur-md text-white p-4 rounded-2xl shadow-2xl border border-slate-800 flex flex-col gap-3 pointer-events-auto"
+            >
+              {isPreviewLoading ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 bg-indigo-500 rounded-full animate-ping shrink-0"></div>
+                  <span className="text-xs font-bold font-sans">{t('loadingPreview')}</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={cn(
+                        "w-2 h-2 rounded-full shrink-0",
+                        uploadStatus === 'success' ? "bg-emerald-500" : "bg-indigo-500 animate-pulse"
+                      )}></div>
+                      <span className="text-xs font-bold font-sans">
+                        {uploadStatus === 'success' 
+                          ? (language === 'bn' ? "আপলোড সম্পন্ন হয়েছে!" : "Upload Completed!")
+                          : (language === 'bn' ? `আপলোড হচ্ছে (${currentUploadingIndex}/${uploadFilesCount})` : `Uploading (${currentUploadingIndex}/${uploadFilesCount})`)
+                        }
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-400">
+                      {uploadProgress}%
+                    </span>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div 
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        uploadStatus === 'success' ? "bg-emerald-500" : "bg-indigo-500"
+                      )}
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+
+                  {uploadStatus === 'success' && (
+                    <p className="text-[10px] text-emerald-400 font-bold font-sans flex items-center gap-1 animate-pulse">
+                      ✓ {language === 'bn' ? "১০০% লোডিং সম্পন্ন" : "100% Loading Completed"}
+                    </p>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </footer>
 
       {/* Hidden Thumbnail Input */}
