@@ -1,7 +1,7 @@
 
 import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, Auth, signInWithEmailAndPassword, deleteUser, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { initializeFirestore, Firestore, terminate } from "firebase/firestore";
+import { initializeFirestore, Firestore, terminate, enableIndexedDbPersistence } from "firebase/firestore";
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -49,6 +49,16 @@ export const getFirebaseDb = () => {
     // Force long polling to avoid "WebChannelConnection transport errored" in restricted networks
     db = initializeFirestore(getFirebaseApp(), {
       experimentalForceLongPolling: true,
+    });
+    
+    enableIndexedDbPersistence(db).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        console.warn("Firestore persistence failed: multiple tabs open");
+      } else if (err.code === 'unimplemented') {
+        console.warn("Firestore persistence is not supported by the browser");
+      } else {
+        console.error("Firestore persistence error:", err);
+      }
     });
   }
   return db;
