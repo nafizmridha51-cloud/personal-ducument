@@ -589,7 +589,20 @@ const App: React.FC = () => {
   }, [folders, files, isDemoMode, remoteAccess.isActive, remoteAccess.user?.uid]);
 
   useEffect(() => {
+    const handleStatusChange = () => {
+      if (!navigator.onLine) {
+        setConnectionStatus('offline');
+      } else {
+        testConnection();
+      }
+    };
+
     const testConnection = async () => {
+      if (!navigator.onLine) {
+        setConnectionStatus('offline');
+        return;
+      }
+
       if (!isFirebaseConfigured || isDemoMode) {
         setConnectionStatus('online');
         return;
@@ -615,8 +628,15 @@ const App: React.FC = () => {
     };
 
     testConnection();
+    window.addEventListener('online', handleStatusChange);
+    window.addEventListener('offline', handleStatusChange);
+
     const interval = setInterval(testConnection, 30000); // Re-check every 30s
-    return () => clearInterval(interval);
+    return () => {
+      window.removeEventListener('online', handleStatusChange);
+      window.removeEventListener('offline', handleStatusChange);
+      clearInterval(interval);
+    };
   }, [isDemoMode]);
 
   useEffect(() => {

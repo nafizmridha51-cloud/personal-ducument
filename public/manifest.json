@@ -1,0 +1,17 @@
+{
+  "name": "সুরক্ষিত নথি ভল্ট",
+  "short_name": "নতি ভল্ট",
+  "description": "সুরক্ষিত নথি ভল্ট (Secure Doc Vault)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/5087/5087579.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
