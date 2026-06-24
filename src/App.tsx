@@ -50,7 +50,8 @@ import {
   Fingerprint,
   History,
   Bell,
-  CheckCheck
+  CheckCheck,
+  CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -150,6 +151,12 @@ const App: React.FC = () => {
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadFilesCount, setUploadFilesCount] = useState(0);
   const [currentUploadingIndex, setCurrentUploadingIndex] = useState(0);
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [shareProgress, setShareProgress] = useState(0);
+  const [shareFilesCount, setShareFilesCount] = useState(0);
+  const [currentSharingIndex, setCurrentSharingIndex] = useState(0);
+  const [shareStatus, setShareStatus] = useState<'idle' | 'preparing' | 'sharing' | 'success' | 'error'>('idle');
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -2299,6 +2306,131 @@ const App: React.FC = () => {
     }
   };
 
+  const handleBatchShare = async () => {
+    if (selectedFileIds.length === 0 || isSharing) return;
+
+    setIsSharing(true);
+    setShareProgress(0);
+    setShareStatus('preparing');
+    setShareFilesCount(selectedFileIds.length);
+    setCurrentSharingIndex(1);
+
+    const preparedFiles: { file: FileData; dataUrl: string }[] = [];
+    const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+
+    try {
+      for (let i = 0; i < selectedFileIds.length; i++) {
+        const fileId = selectedFileIds[i];
+        setCurrentSharingIndex(i + 1);
+        setShareProgress(Math.round((i / selectedFileIds.length) * 100));
+
+        const file = files.find(f => f.id === fileId);
+        if (!file) {
+          throw new Error("File not found in state");
+        }
+
+        let fileDataUrl = file.dataUrl;
+
+        if (fileDataUrl === 'CHUNKED') {
+          if (isDemoMode) {
+            fileDataUrl = "data:" + file.type + ";base64,";
+          } else {
+            const chunksQuery = query(
+              collection(db, 'fileChunks'), 
+              where('fileId', '==', file.id)
+            );
+            const chunksSnapshot = await getDocs(chunksQuery);
+            
+            if (chunksSnapshot.empty) {
+              throw new Error(`Data not found for file: ${file.name}`);
+            }
+
+            const sortedChunks = chunksSnapshot.docs
+              .map(doc => doc.data())
+              .sort((a, b) => a.index - b.index);
+
+            let fullBase64 = '';
+            sortedChunks.forEach(chunk => {
+              fullBase64 += chunk.data;
+            });
+            
+            fileDataUrl = fullBase64;
+            setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
+          }
+        }
+
+        preparedFiles.push({ file, dataUrl: fileDataUrl });
+        setShareProgress(Math.round(((i + 1) / selectedFileIds.length) * 100));
+      }
+
+      setShareStatus('sharing');
+      setShareProgress(100);
+
+      if (navigator.share) {
+        const shareFiles: File[] = [];
+
+        for (const item of preparedFiles) {
+          const blob = dataUrlToBlob(item.dataUrl);
+          if (!blob) continue;
+
+          let fileName = item.file.name;
+          const extensionMap: Record<string, string> = {
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif',
+            'application/pdf': '.pdf',
+            'text/plain': '.txt',
+          };
+
+          const hasExtension = fileName.includes('.');
+          if (!hasExtension && extensionMap[item.file.type]) {
+            fileName += extensionMap[item.file.type];
+          }
+
+          const shareFile = new File([blob], fileName, { type: item.file.type });
+          shareFiles.push(shareFile);
+        }
+
+        if (shareFiles.length === 0) {
+          throw new Error("No files could be converted for sharing");
+        }
+
+        const shareData: ShareData = {
+          files: shareFiles,
+          title: language === 'bn' ? 'শেয়ার করা ফাইলসমূহ' : 'Shared Files',
+          text: language === 'bn' ? 'সুরক্ষিত নথি ভল্ট থেকে ফাইল শেয়ার করা হয়েছে।' : 'Files shared from Secure Doc Vault.',
+        };
+
+        if (navigator.canShare && navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+        } else {
+          await navigator.share({
+            title: language === 'bn' ? `${shareFiles.length} টি ফাইল` : `${shareFiles.length} files`,
+            text: language === 'bn' ? `${shareFiles.length} টি ফাইল শেয়ার করা হয়েছে।` : `Sharing ${shareFiles.length} files.`,
+          });
+        }
+
+        setShareStatus('success');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        setSelectedFileIds([]);
+        setIsSelectionMode(false);
+      } else {
+        alert(t('shareNotSupported'));
+      }
+    } catch (err: any) {
+      console.error('Batch sharing failed:', err);
+      if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+        alert(t('sharePermissionError'));
+      } else if (err.name !== 'AbortError' && !err.message?.includes('already completed')) {
+        alert(t('shareError') + "\n" + (err.message || ''));
+      }
+      setShareStatus('error');
+    } finally {
+      setIsSharing(false);
+      setShareStatus('idle');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -3828,32 +3960,94 @@ service cloud.firestore {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {filteredFiles.map((file, index) => {
-                    const isThumbnailMode = thumbnailModeFileIds.includes(file.id);
-                    const hasThumbnail = !!file.thumbnailUrl;
-
-                    return (
-                      <motion.div 
-                        layout
-                        key={`main-file-${file.id}-${index}`} 
-                        className="group bg-white p-5 rounded-3xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-indigo-100 transition-all relative overflow-hidden"
-                      >
-                        <div className="flex items-start justify-between mb-4">
-                          <div 
-                            className={cn(
-                              "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all overflow-hidden relative",
-                              (file.type.includes('image') || file.type.includes('pdf')) && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
-                            )}
-                            onClick={(e) => {
-                              if (file.type.includes('pdf')) {
-                                e.stopPropagation();
-                                toggleThumbnailMode(file.id);
-                              } else {
-                                (file.type.includes('image') || file.type.includes('pdf')) && handlePreview(file);
-                              }
-                            }}
+                <>
+                  {/* Files Header & Multi-Select Controls */}
+                  {filteredFiles.length > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-6 pb-3 border-b border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <p className="text-[10px] uppercase text-slate-400 font-bold tracking-widest">{t('files')}</p>
+                      
+                      <div className="flex items-center gap-2">
+                        {isSelectionMode ? (
+                          <>
+                            <button
+                              onClick={() => {
+                                const allIds = filteredFiles.map(f => f.id);
+                                const allSelected = allIds.every(id => selectedFileIds.includes(id));
+                                if (allSelected) {
+                                  setSelectedFileIds(prev => prev.filter(id => !allIds.includes(id)));
+                                } else {
+                                  setSelectedFileIds(prev => Array.from(new Set([...prev, ...allIds])));
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              {filteredFiles.map(f => f.id).every(id => selectedFileIds.includes(id)) ? t('deselectAll') : t('selectAll')}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setIsSelectionMode(false);
+                                setSelectedFileIds([]);
+                              }}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                            >
+                              {t('cancel')}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => setIsSelectionMode(true)}
+                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                           >
+                            <CheckSquare className="w-3.5 h-3.5" />
+                            {t('selectFiles')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {filteredFiles.map((file, index) => {
+                      const isThumbnailMode = thumbnailModeFileIds.includes(file.id);
+                      const hasThumbnail = !!file.thumbnailUrl;
+
+                      return (
+                        <motion.div 
+                          layout
+                          key={`main-file-${file.id}-${index}`} 
+                          onClick={() => {
+                            if (isSelectionMode) {
+                              setSelectedFileIds(prev => 
+                                prev.includes(file.id) 
+                                  ? prev.filter(id => id !== file.id) 
+                                  : [...prev, file.id]
+                              );
+                            }
+                          }}
+                          className={cn(
+                            "group bg-white p-5 rounded-3xl shadow-sm border transition-all relative overflow-hidden flex flex-col justify-between h-full min-h-[180px]",
+                            isSelectionMode ? "cursor-pointer" : "",
+                            isSelectionMode && selectedFileIds.includes(file.id)
+                              ? "border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10 shadow-md"
+                              : "border-slate-200 hover:shadow-xl hover:border-indigo-100"
+                          )}
+                        >
+                          <div className="flex items-start justify-between mb-4">
+                              <div 
+                                className={cn(
+                                  "w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center transition-all overflow-hidden relative",
+                                  !isSelectionMode && (file.type.includes('image') || file.type.includes('pdf')) && "cursor-pointer hover:bg-indigo-50 hover:scale-105"
+                                )}
+                                onClick={(e) => {
+                                  if (isSelectionMode) return; // parent handles select toggle
+                                  if (file.type.includes('pdf')) {
+                                    e.stopPropagation();
+                                    toggleThumbnailMode(file.id);
+                                  } else {
+                                    (file.type.includes('image') || file.type.includes('pdf')) && handlePreview(file);
+                                  }
+                                }}
+                              >
                             {file.type.includes('pdf') ? (
                               isThumbnailMode ? (
                                 <ImageIcon className="w-6 h-6 text-indigo-500" />
@@ -3867,81 +4061,94 @@ service cloud.firestore {
                             )}
                           </div>
                           <div className="flex items-center gap-1">
-                            {(file.type.includes('image') || file.type.includes('pdf')) && (
-                            <button 
-                              onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true }) : handlePreview(file)}
-                              className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                              title={t('preview')}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          )}
-                          {!remoteAccess.isActive && (
-                            <button 
-                              onClick={() => setMovingFile(file)}
-                              className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                              title={t('move')}
-                            >
-                              <ArrowRightLeft className="w-4 h-4" />
-                            </button>
-                          )}
-                          <button 
-                            onClick={() => isThumbnailMode && hasThumbnail ? handleShare({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', name: (file.thumbnailName || file.name.split('.')[0]) + '-photo.png', isThumbnail: true }) : handleShare(file)}
-                            className={cn(
-                              "p-1.5 transition-all rounded-lg",
-                              preparingFileId === file.id 
-                                ? "text-indigo-500 bg-indigo-50" 
-                                : (isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED')
-                                  ? "text-emerald-500 bg-emerald-50" 
-                                  : "text-slate-500 hover:text-blue-500 hover:bg-blue-50"
-                            )}
-                            title={(isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED') ? t('share') : t('preparing')}
-                          >
-                            {preparingFileId === file.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : file.dataUrl !== 'CHUNKED' ? (
-                              <Share2 className="w-4 h-4 fill-emerald-500/20" />
+                            {isSelectionMode ? (
+                              <div className={cn(
+                                "w-6 h-6 rounded-xl border flex items-center justify-center transition-all shadow-sm",
+                                selectedFileIds.includes(file.id)
+                                  ? "bg-indigo-600 border-indigo-600 text-white"
+                                  : "border-slate-300 bg-white"
+                              )}>
+                                {selectedFileIds.includes(file.id) && <Check className="w-4 h-4 stroke-[3px]" />}
+                              </div>
                             ) : (
-                              <Share2 className="w-4 h-4" />
+                              <>
+                                {(file.type.includes('image') || file.type.includes('pdf')) && (
+                                  <button 
+                                    onClick={() => isThumbnailMode && hasThumbnail ? handlePreview({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', isThumbnail: true }) : handlePreview(file)}
+                                    className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                                    title={t('preview')}
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {!remoteAccess.isActive && (
+                                  <button 
+                                    onClick={() => setMovingFile(file)}
+                                    className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                                    title={t('move')}
+                                  >
+                                    <ArrowRightLeft className="w-4 h-4" />
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => isThumbnailMode && hasThumbnail ? handleShare({ ...file, dataUrl: file.thumbnailUrl!, type: 'image/png', name: (file.thumbnailName || file.name.split('.')[0]) + '-photo.png', isThumbnail: true }) : handleShare(file)}
+                                  className={cn(
+                                    "p-1.5 transition-all rounded-lg",
+                                    preparingFileId === file.id 
+                                      ? "text-indigo-500 bg-indigo-50" 
+                                      : (isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED')
+                                        ? "text-emerald-500 bg-emerald-50" 
+                                        : "text-slate-500 hover:text-blue-500 hover:bg-blue-50"
+                                  )}
+                                  title={(isThumbnailMode && hasThumbnail ? file.thumbnailUrl !== 'CHUNKED' : file.dataUrl !== 'CHUNKED') ? t('share') : t('preparing')}
+                                >
+                                  {preparingFileId === file.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : file.dataUrl !== 'CHUNKED' ? (
+                                    <Share2 className="w-4 h-4 fill-emerald-500/20" />
+                                  ) : (
+                                    <Share2 className="w-4 h-4" />
+                                  )}
+                                </button>
+                                {!remoteAccess.isActive && (
+                                  <>
+                                    <button 
+                                      onClick={() => {
+                                        setEditingFileId(file.id);
+                                        setEditingFileName(isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name);
+                                      }}
+                                      className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
+                                      title={t('rename')}
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        if (isThumbnailMode) {
+                                          if (hasThumbnail) deleteThumbnail(file.id);
+                                        } else {
+                                          deleteFile(file.id);
+                                        }
+                                      }}
+                                      disabled={isDeleting === file.id || (isThumbnailMode && !hasThumbnail)}
+                                      className={cn(
+                                        "p-1.5 transition-all rounded-lg",
+                                        (isDeleting === file.id || (isThumbnailMode && !hasThumbnail))
+                                          ? "opacity-50 cursor-not-allowed"
+                                          : "text-slate-500 hover:text-rose-500 hover:bg-rose-50"
+                                      )}
+                                    >
+                                      {isDeleting === file.id ? (
+                                        <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <Trash2 className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  </>
+                                )}
+                              </>
                             )}
-                          </button>
-                          {!remoteAccess.isActive && (
-                            <>
-                              <button 
-                                onClick={() => {
-                                  setEditingFileId(file.id);
-                                  setEditingFileName(isThumbnailMode && file.thumbnailName ? file.thumbnailName : file.name);
-                                }}
-                                className="p-1.5 text-slate-500 hover:text-indigo-500 hover:bg-indigo-50 transition-all rounded-lg"
-                                title={t('rename')}
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  if (isThumbnailMode) {
-                                    if (hasThumbnail) deleteThumbnail(file.id);
-                                  } else {
-                                    deleteFile(file.id);
-                                  }
-                                }}
-                                disabled={isDeleting === file.id || (isThumbnailMode && !hasThumbnail)}
-                                className={cn(
-                                  "p-1.5 transition-all rounded-lg",
-                                  (isDeleting === file.id || (isThumbnailMode && !hasThumbnail))
-                                    ? "opacity-50 cursor-not-allowed"
-                                    : "text-slate-500 hover:text-rose-500 hover:bg-rose-50"
-                                )}
-                              >
-                                {isDeleting === file.id ? (
-                                  <div className="w-4 h-4 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4" />
-                                )}
-                              </button>
-                            </>
-                          )}
-                        </div>
+                          </div>
                       </div>
                       
                       <div className="mb-4">
@@ -4028,7 +4235,8 @@ service cloud.firestore {
                   );
                 })}
                 </div>
-              )}
+              </>
+            )}
             </div>
           )}
         </div>
@@ -4693,7 +4901,7 @@ service cloud.firestore {
       {/* Persistent Footer/Status */}
       <footer className="fixed bottom-0 right-0 p-4 pointer-events-none z-[100] max-w-sm w-full sm:w-80">
         <AnimatePresence>
-          {(isUploading || isPreviewLoading) && (
+          {(isUploading || isPreviewLoading || shareStatus !== 'idle') && (
             <motion.div
               initial={{ opacity: 0, y: 50, scale: 0.9 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -4704,6 +4912,45 @@ service cloud.firestore {
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-2 bg-indigo-500 rounded-full animate-ping shrink-0"></div>
                   <span className="text-xs font-bold font-sans">{t('loadingPreview')}</span>
+                </div>
+              ) : shareStatus !== 'idle' ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={cn(
+                        "w-2 h-2 rounded-full shrink-0",
+                        shareStatus === 'success' ? "bg-emerald-500" : "bg-indigo-500 animate-pulse"
+                      )}></div>
+                      <span className="text-xs font-bold font-sans">
+                        {shareStatus === 'success' 
+                          ? t('batchShareSuccess')
+                          : shareStatus === 'sharing'
+                            ? t('sharingFiles')
+                            : `${t('preparingFiles')} (${currentSharingIndex}/${shareFilesCount})`
+                        }
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-400">
+                      {shareProgress}%
+                    </span>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div 
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        shareStatus === 'success' ? "bg-emerald-500" : "bg-indigo-500"
+                      )}
+                      style={{ width: `${shareProgress}%` }}
+                    />
+                  </div>
+
+                  {shareStatus === 'success' && (
+                    <p className="text-[10px] text-emerald-400 font-bold font-sans flex items-center gap-1 animate-pulse">
+                      ✓ {language === 'bn' ? "১০০% শেয়ার সম্পন্ন" : "100% Share Completed"}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -4747,6 +4994,39 @@ service cloud.firestore {
           )}
         </AnimatePresence>
       </footer>
+
+      {/* Floating Selection Action Bar */}
+      <AnimatePresence>
+        {isSelectionMode && selectedFileIds.length > 0 && shareStatus === 'idle' && (
+          <motion.div
+            initial={{ opacity: 0, y: 100, x: "-50%" }}
+            animate={{ opacity: 1, y: 0, x: "-50%" }}
+            exit={{ opacity: 0, y: 100, x: "-50%" }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] bg-white border border-slate-200 shadow-2xl rounded-2xl px-6 py-4 flex items-center gap-6 max-w-md w-[calc(100%-2rem)] justify-between"
+          >
+            <div className="flex flex-col">
+              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+                {language === 'bn' ? 'সিলেকশন' : 'Selection'}
+              </span>
+              <span className="text-sm font-bold text-slate-800">
+                {language === 'bn' 
+                  ? `${selectedFileIds.length} টি ফাইল সিলেক্ট করা হয়েছে` 
+                  : `${selectedFileIds.length} files selected`
+                }
+              </span>
+            </div>
+
+            <button
+              onClick={handleBatchShare}
+              disabled={isSharing}
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+            >
+              <Share2 className="w-4 h-4 fill-white/20" />
+              {t('shareSelected')}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Hidden Thumbnail Input */}
       <input 
