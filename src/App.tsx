@@ -91,6 +91,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Settings, Info } from 'lucide-react';
 import PDFViewer from './components/PDFViewer';
+import { fileCache } from './lib/fileCache';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -242,6 +243,7 @@ const App: React.FC = () => {
     }
   }, [showForgot]);
   const [showPreview, setShowPreview] = useState<FileData | null>(null);
+  const [offlineShareFile, setOfflineShareFile] = useState<FileData | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [showRecycleBin, setShowRecycleBin] = useState(false);
   const [showStorageAnalysis, setShowStorageAnalysis] = useState(false);
@@ -1285,15 +1287,18 @@ const App: React.FC = () => {
           reader.readAsDataURL(file);
         });
 
+        const fileId = Math.random().toString(36).substr(2, 9);
+        await fileCache.save(fileId, base64Data);
+
         newFiles.push({
-          id: Math.random().toString(36).substr(2, 9),
+          id: fileId,
           name: file.name,
           type: file.type,
           size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
           folderId: activeFolderId,
           userId: user?.uid || 'demo-user',
           uploadDate: new Date().toLocaleDateString('bn-BD'),
-          dataUrl: base64Data,
+          dataUrl: 'OFFLINE_CACHED',
           isChunked: false
         });
 
@@ -1343,7 +1348,7 @@ const App: React.FC = () => {
       let chunksUploaded = 0;
       let currentFileIdx = 0;
 
-      for (const { file, chunks } of filesWithChunks) {
+      for (const { file, chunks, fullBase64 } of filesWithChunks) {
         currentFileIdx++;
         setCurrentUploadingIndex(currentFileIdx);
         let fileDocRef: any = null;
@@ -1377,6 +1382,9 @@ const App: React.FC = () => {
             chunksUploaded++;
             setUploadProgress(Math.round((chunksUploaded / totalChunks) * 100));
           }
+
+          // Cache the file locally for 100% offline access and offline sharing
+          await fileCache.save(fileDoc.id, fullBase64);
 
           console.log(`File ${file.name} uploaded successfully.`);
         } catch (fileErr: any) {
@@ -2017,42 +2025,58 @@ const App: React.FC = () => {
   const downloadFile = async (file: FileData) => {
     let dataUrl = file.dataUrl;
 
-    if (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED') {
+    if (dataUrl === 'OFFLINE_CACHED' || (!isDemoMode && file.isChunked && dataUrl === 'CHUNKED')) {
       setIsUploading(true); // Reusing uploading state for loading
       try {
-        console.log("Attempting to download chunked file. ID:", file.id);
-        const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
-        const chunksQuery = query(
-          collection(db, 'fileChunks'), 
-          where('fileId', '==', file.id)
-        );
-        const chunksSnapshot = await getDocs(chunksQuery);
+        console.log("Attempting to load file. ID:", file.id);
         
-        if (chunksSnapshot.empty) {
-          console.error("No chunks found in Firestore for file ID:", file.id);
-          if (!remoteAccess.isActive && window.confirm(t('fileDataNotFoundError'))) {
-            await deleteDoc(doc(db, 'files', file.id));
-            setFiles(files.filter(f => f.id !== file.id));
-          } else if (remoteAccess.isActive) {
-            alert(t('fileLoadError'));
-          }
+        // 1. Try local IndexedDB fileCache first
+        const cachedData = await fileCache.get(file.id);
+        if (cachedData) {
+          dataUrl = cachedData;
+          console.log("File loaded successfully from IndexedDB local cache:", file.id);
+        } else if (isDemoMode) {
+          alert(t('fileDataMissing'));
           setIsUploading(false);
           return;
+        } else {
+          // 2. Fallback to Firestore
+          const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
+          const chunksQuery = query(
+            collection(db, 'fileChunks'), 
+            where('fileId', '==', file.id)
+          );
+          const chunksSnapshot = await getDocs(chunksQuery);
+          
+          if (chunksSnapshot.empty) {
+            console.error("No chunks found in Firestore for file ID:", file.id);
+            if (!remoteAccess.isActive && window.confirm(t('fileDataNotFoundError'))) {
+              await deleteDoc(doc(db, 'files', file.id));
+              setFiles(files.filter(f => f.id !== file.id));
+            } else if (remoteAccess.isActive) {
+              alert(t('fileLoadError'));
+            }
+            setIsUploading(false);
+            return;
+          }
+
+          console.log(`Found ${chunksSnapshot.size} chunks for file ${file.id}`);
+
+          // Sort chunks in memory to avoid Firebase Index requirement
+          const sortedChunks = chunksSnapshot.docs
+            .map(doc => doc.data())
+            .sort((a, b) => a.index - b.index);
+
+          let fullBase64 = '';
+          sortedChunks.forEach(chunk => {
+            fullBase64 += chunk.data;
+          });
+          dataUrl = fullBase64;
+
+          // 3. Save to local IndexedDB fileCache for offline access
+          await fileCache.save(file.id, fullBase64);
+          console.log("File reconstructed and cached successfully. ID:", file.id);
         }
-
-        console.log(`Found ${chunksSnapshot.size} chunks for file ${file.id}`);
-
-        // Sort chunks in memory to avoid Firebase Index requirement
-        const sortedChunks = chunksSnapshot.docs
-          .map(doc => doc.data())
-          .sort((a, b) => a.index - b.index);
-
-        let fullBase64 = '';
-        sortedChunks.forEach(chunk => {
-          fullBase64 += chunk.data;
-        });
-        dataUrl = fullBase64;
-        console.log("File reconstructed successfully. Total length:", dataUrl.length);
       } catch (err: any) {
         console.error("Download error details:", err);
         alert(t('fileDownloadError'));
@@ -2146,10 +2170,26 @@ const App: React.FC = () => {
   const handlePreview = async (file: FileData) => {
     const isThumbnailPreview = file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
     const isFilePreview = !file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isChunked;
+    const isOfflineCached = file.dataUrl === 'OFFLINE_CACHED';
 
-    if (!isDemoMode && (isFilePreview || isThumbnailPreview)) {
+    if (isOfflineCached || (!isDemoMode && (isFilePreview || isThumbnailPreview))) {
       setIsPreviewLoading(true);
       try {
+        // 1. Try local IndexedDB cache first
+        const cachedData = await fileCache.get(file.id);
+        if (cachedData) {
+          setShowPreview({ ...file, dataUrl: cachedData });
+          setIsPreviewLoading(false);
+          return;
+        }
+
+        if (isDemoMode) {
+          alert(t('fileDataMissing'));
+          setIsPreviewLoading(false);
+          return;
+        }
+
+        // 2. Fallback to Firestore
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const collectionName = isThumbnailPreview ? 'thumbnailChunks' : 'fileChunks';
         
@@ -2179,6 +2219,9 @@ const App: React.FC = () => {
           fullBase64 += chunk.data;
         });
         
+        // 3. Save to local cache for 100% offline access next time
+        await fileCache.save(file.id, fullBase64);
+
         setShowPreview({ ...file, dataUrl: fullBase64 });
       } catch (err: any) {
         console.error("Preview error:", err);
@@ -2215,16 +2258,93 @@ const App: React.FC = () => {
     }
   };
 
-  const handleShare = async (file: FileData) => {
+  const handleShare = async (file: FileData, forceExecute: boolean = false) => {
     if (isSharing) return;
 
-    // If file is chunked and not yet loaded, we need to prepare it first
+    // Show custom Offline/Bluetooth Share modal if offline and not forced
+    if (connectionStatus === 'offline' && !forceExecute) {
+      setOfflineShareFile(file);
+      return;
+    }
+
     const isThumbnailShare = file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isThumbnailChunked;
     const isMainFileChunked = !file.isThumbnail && file.dataUrl === 'CHUNKED' && file.isChunked;
+    const isOfflineCached = file.dataUrl === 'OFFLINE_CACHED';
 
-    if (!isDemoMode && (isMainFileChunked || isThumbnailShare)) {
+    if (isOfflineCached || (!isDemoMode && (isMainFileChunked || isThumbnailShare))) {
       setPreparingFileId(file.id);
       try {
+        // 1. Try local IndexedDB cache first
+        const cachedData = await fileCache.get(file.id);
+        if (cachedData) {
+          if (isThumbnailShare) {
+            setFiles(prev => prev.map(f => f.id === file.id ? { ...f, thumbnailUrl: cachedData } : f));
+          } else {
+            setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: cachedData } : f));
+          }
+          setPreparingFileId(null);
+          
+          // Since we got it from cache instantly (no async network latency that disrupts user gesture),
+          // we can directly trigger native share!
+          const dataUrl = cachedData;
+          setIsSharing(true);
+          try {
+            if (navigator.share) {
+              const blob = dataUrlToBlob(dataUrl);
+              if (!blob) throw new Error("Blob conversion failed");
+              
+              let fileName = file.name;
+              const extensionMap: Record<string, string> = {
+                'image/jpeg': '.jpg',
+                'image/png': '.png',
+                'image/gif': '.gif',
+                'application/pdf': '.pdf',
+                'text/plain': '.txt',
+              };
+
+              const hasExtension = fileName.includes('.');
+              if (!hasExtension && extensionMap[file.type]) {
+                fileName += extensionMap[file.type];
+              }
+              
+              const shareFile = new File([blob], fileName, { type: file.type });
+              const shareData: ShareData = {
+                files: [shareFile],
+                title: fileName,
+                text: t('shareText') + fileName,
+              };
+
+              if (navigator.canShare && navigator.canShare(shareData)) {
+                await navigator.share(shareData);
+              } else {
+                await navigator.share({
+                  title: file.name,
+                  text: t('shareText') + file.name,
+                });
+              }
+            } else {
+              alert(t('shareNotSupported'));
+            }
+          } catch (err: any) {
+            console.error('Sharing failed:', err);
+            if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
+              alert(t('sharePermissionError'));
+            } else if (err.name !== 'AbortError' && !err.message?.includes('already completed')) {
+              alert(t('shareError'));
+            }
+          } finally {
+            setIsSharing(false);
+          }
+          return;
+        }
+
+        if (isDemoMode) {
+          alert(t('fileDataMissing'));
+          setPreparingFileId(null);
+          return;
+        }
+
+        // 2. Fallback to Firestore
         const db = remoteAccess.isActive && remoteAccess.db ? remoteAccess.db : getFirebaseDb();
         const collectionName = isThumbnailShare ? 'thumbnailChunks' : 'fileChunks';
         const chunksQuery = query(
@@ -2248,6 +2368,9 @@ const App: React.FC = () => {
           fullBase64 += chunk.data;
         });
         
+        // 3. Save to local IndexedDB cache for offline access next time
+        await fileCache.save(file.id, fullBase64);
+
         // Update the file in the state so it's "ready" for the next click
         if (isThumbnailShare) {
           setFiles(prev => prev.map(f => f.id === file.id ? { ...f, thumbnailUrl: fullBase64 } : f));
@@ -2255,8 +2378,6 @@ const App: React.FC = () => {
           setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
         }
         
-        // We don't call share here because the user gesture is lost after async fetch.
-        // The UI will now show a "Ready" state for this file.
       } catch (err) {
         console.error("Prepare share error:", err);
         alert(t('filePrepareError'));
@@ -2270,7 +2391,7 @@ const App: React.FC = () => {
     setIsSharing(true);
     try {
       const dataUrl = file.dataUrl;
-      if (!dataUrl || dataUrl === 'CHUNKED') {
+      if (!dataUrl || dataUrl === 'CHUNKED' || dataUrl === 'OFFLINE_CACHED') {
         alert(t('fileNotReadyShare'));
         setIsSharing(false);
         return;
@@ -2351,8 +2472,12 @@ const App: React.FC = () => {
 
         let fileDataUrl = file.dataUrl;
 
-        if (fileDataUrl === 'CHUNKED') {
-          if (isDemoMode) {
+        if (fileDataUrl === 'CHUNKED' || fileDataUrl === 'OFFLINE_CACHED') {
+          // Check local IndexedDB cache first
+          const cachedData = await fileCache.get(file.id);
+          if (cachedData) {
+            fileDataUrl = cachedData;
+          } else if (isDemoMode) {
             fileDataUrl = "data:" + file.type + ";base64,";
           } else {
             const chunksQuery = query(
@@ -2376,6 +2501,9 @@ const App: React.FC = () => {
             
             fileDataUrl = fullBase64;
             setFiles(prev => prev.map(f => f.id === file.id ? { ...f, dataUrl: fullBase64 } : f));
+            
+            // Cache it locally
+            await fileCache.save(file.id, fullBase64);
           }
         }
 
@@ -4933,6 +5061,102 @@ service cloud.firestore {
                     {t('close')}
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        
+        {/* Offline Share Modal */}
+        {offlineShareFile && (
+          <div key="offline-share-backdrop" className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div 
+              key="offline-share-modal"
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 max-w-md w-full relative overflow-hidden"
+            >
+              <button 
+                onClick={() => setOfflineShareFile(null)}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 transition-all rounded-full hover:bg-slate-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner">
+                  <Share2 className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-1">
+                  {t('offlineShareTitle')}
+                </h3>
+                <p className="text-slate-500 text-xs">
+                  {offlineShareFile.name} ({offlineShareFile.size})
+                </p>
+              </div>
+
+              {/* Alert Warning for non-cached cloud files */}
+              {offlineShareFile.dataUrl === 'CHUNKED' && !isDemoMode && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl mb-6 text-left text-xs leading-relaxed text-amber-800 flex gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div>
+                    <p className="font-bold mb-1">ক্লাউড ফাইল অফলাইন সীমাবদ্ধতা (Cloud File Limitation)</p>
+                    <p>{t('offlineShareAlert')}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <button
+                  onClick={async () => {
+                    const file = offlineShareFile;
+                    setOfflineShareFile(null);
+                    await handleShare(file, true);
+                  }}
+                  disabled={offlineShareFile.dataUrl === 'CHUNKED' && !isDemoMode}
+                  className={cn(
+                    "w-full p-4 border rounded-2xl text-left transition-all duration-200 flex items-center gap-4 group",
+                    (offlineShareFile.dataUrl === 'CHUNKED' && !isDemoMode)
+                      ? "bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed"
+                      : "bg-white border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/30"
+                  )}
+                >
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                    (offlineShareFile.dataUrl === 'CHUNKED' && !isDemoMode)
+                      ? "bg-slate-100 text-slate-400"
+                      : "bg-indigo-100 text-indigo-600 group-hover:bg-indigo-200"
+                  )}>
+                    <Share2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{t('bluetoothShare')}</h4>
+                    <p className="text-xs text-slate-500">{t('bluetoothShareDesc')}</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const file = offlineShareFile;
+                    setOfflineShareFile(null);
+                    downloadFile(file);
+                  }}
+                  className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-left transition-all duration-200 flex items-center gap-4 hover:border-indigo-500 hover:bg-indigo-50/30 group"
+                >
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center shrink-0 group-hover:bg-emerald-200">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{t('downloadOffline')}</h4>
+                    <p className="text-xs text-slate-500">{t('downloadOfflineDesc')}</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="mt-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-left">
+                <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                  💡 {t('offlineShareTip')}
+                </p>
               </div>
             </motion.div>
           </div>
